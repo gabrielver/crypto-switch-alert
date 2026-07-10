@@ -85,6 +85,13 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 12px 24px; }
 .down { color: var(--bad); }
 .flat { color: var(--muted); }
 
+/* Conseil personnalisé (accueil) */
+.advice-card { border-color: var(--accent); }
+.advice-card h3 { font-size: 0.98rem; }
+.advice-good { border-color: var(--good-chip); }
+.advice-text { margin: 6px 0 0; font-size: 0.87rem; color: var(--ink-2); }
+.advice-text b { color: var(--ink); }
+
 /* Portefeuille & simulateur de swap */
 .holdings-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-top: 6px; }
 .holdings-row label { display: block; font-size: 0.75rem; color: var(--ink-2); margin-bottom: 3px; font-weight: 600; }

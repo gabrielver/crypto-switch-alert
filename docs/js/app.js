@@ -243,6 +243,70 @@ function feeFor(a, b) {
   return s.fees[`${a}/${b}`] ?? s.fees[`${b}/${a}`] ?? s.defaultFeePct;
 }
 
+// Carte « Conseil » en tête d'accueil : croise les signaux de paires avec le
+// portefeuille et dit quoi swapper (ou explique pourquoi il vaut mieux attendre).
+function adviceCard() {
+  const s = state.settings;
+  const held = Object.keys(s.holdings).filter((sym) => (Number(s.holdings[sym]) || 0) > 0);
+  if (!held.length) {
+    return `<div class="card advice-card"><h3>💡 Conseil</h3>
+      <p class="advice-text">Renseigne ton portefeuille ci-dessous : l'app croisera tes quantités
+      avec le marché et te dira quoi swapper pour un profit potentiel.</p></div>`;
+  }
+
+  // Recommandations : signaux dont la crypto de départ est détenue.
+  const recos = [];
+  for (const a of state.analyses) {
+    if (!a.signal || !held.includes(a.signal.from)) continue;
+    const qty = Number(s.holdings[a.signal.from]) || 0;
+    const pFrom = priceOf(a.signal.from);
+    const pTo = priceOf(a.signal.to);
+    if (!pFrom || !pTo) continue;
+    const got = ((qty * pFrom) / pTo) * (1 - a.feePct / 100);
+    recos.push({ ...a.signal, qty, got });
+  }
+  recos.sort((x, y) => y.netGainPct - x.netGainPct);
+
+  if (recos.length) {
+    const r = recos[0];
+    const others = recos
+      .slice(1)
+      .map(
+        (o) =>
+          `<div class="swap-line">Aussi : ${esc(o.from)} → ${esc(o.to)}, <b class="up">${fmtPct(o.netGainPct)}</b> net</div>`
+      )
+      .join("");
+    return `<div class="card advice-card advice-good">
+      <h3>💡 Il est conseillé d'échanger tes ${esc(r.from)} contre du ${esc(r.to)}</h3>
+      <p class="advice-text">Tes <b>${fmtQty(r.qty)} ${esc(r.from)}</b> donneraient
+      <b>≈ ${fmtQty(r.got)} ${esc(r.to)}</b>, car le ratio ${esc(r.from)}/${esc(r.to)} s'écarte de
+      <b>${fmtPct(r.grossGainPct)}</b> de sa moyenne 24 h en ta faveur
+      (z-score ${r.zScore.toFixed(1)}${r.rsi !== null && r.rsi !== undefined ? `, RSI ${Math.round(r.rsi)}` : ""}),
+      soit <b class="up">${fmtPct(r.netGainPct)} net</b> après ${String(r.feePct).replace(".", ",")} % de frais.
+      Si le ratio revient vers sa moyenne, l'aller-retour laisse ce profit en ${esc(r.from)}.</p>
+      ${others}</div>`;
+  }
+
+  // Pas de signal : afficher quand même le swap le mieux placé, à titre indicatif.
+  let best = null;
+  for (const a of state.analyses) {
+    const ind = a.indicators;
+    if (!ind.dataOk || !ind.smaLong) continue;
+    for (const o of [
+      { from: a.pair.from, to: a.pair.to, net: (ind.ratio / ind.smaLong - 1) * 100 - a.feePct },
+      { from: a.pair.to, to: a.pair.from, net: (ind.smaLong / ind.ratio - 1) * 100 - a.feePct },
+    ]) {
+      if (held.includes(o.from) && (!best || o.net > best.net)) best = o;
+    }
+  }
+  const bestTxt = best
+    ? ` Le mieux placé serait ${esc(best.from)} → ${esc(best.to)} (<b class="${pctClass(best.net)}">${fmtPct(best.net)}</b> net), en dessous de tes seuils.`
+    : "";
+  return `<div class="card advice-card"><h3>💡 Conseil</h3>
+    <p class="advice-text">Rien à faire pour l'instant : aucun swap suffisamment rentable détecté
+    sur tes cryptos, frais déduits.${bestTxt}</p></div>`;
+}
+
 // Carte « Mon portefeuille » : quantités détenues + simulateur de swap
 // (ce que chaque swap donnerait aux prix actuels, frais déduits).
 function portfolioCard() {
@@ -332,7 +396,10 @@ function renderCoins() {
     })
     .join("");
   $("#view-coins").innerHTML =
-    errorBanner() + portfolioCard() + (rows || `<p class="msg-empty">Aucune crypto suivie.</p>`);
+    errorBanner() +
+    adviceCard() +
+    portfolioCard() +
+    (rows || `<p class="msg-empty">Aucune crypto suivie.</p>`);
   bindPortfolioInputs();
 }
 

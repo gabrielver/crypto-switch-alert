@@ -1,7 +1,7 @@
 // Service worker : cache du shell pour un démarrage instantané et un mode
 // hors-ligne (dernières données connues). Incrémenter VERSION à chaque mise
 // à jour des fichiers du shell pour invalider l'ancien cache.
-const VERSION = "csa-v2";
+const VERSION = "csa-v3";
 const SHELL = [
   "./",
   "index.html",
