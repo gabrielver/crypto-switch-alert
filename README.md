@@ -115,6 +115,13 @@ Frais STEPN : le défaut de 2 % est prudent — vérifie les frais réels affich
 l'app STEPN au moment du swap et ajuste `feePct`, sinon les alertes seront trop
 optimistes ou trop rares.
 
+## Portefeuille & simulateur de swap
+
+En haut de l'onglet **Cryptos**, saisis les quantités que tu détiens (GST, GMT, USDC…) :
+l'app affiche la valeur totale du portefeuille et, pour chaque crypto détenue, **ce que
+chaque swap donnerait aux prix actuels, frais déduits** (ex : « 1 000 GST → 126,9 GMT »).
+Les quantités sont mémorisées sur ton téléphone (localStorage), rien n'est envoyé nulle part.
+
 ## Comment sont détectées les opportunités ?
 
 Pour chaque paire (ex : GST/GMT), sur la série du **ratio** de prix :

@@ -42,6 +42,8 @@ const esc = (s) =>
 
 const fmtNum = new Intl.NumberFormat("fr-FR", { maximumSignificantDigits: 5 });
 const fmtPrice = (v) => (v === null || v === undefined ? "?" : `${fmtNum.format(v)} $`);
+const fmtQtyNum = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 4 });
+const fmtQty = (v) => (v >= 1 ? fmtQtyNum.format(v) : fmtNum.format(v));
 const fmtRatio = (v) => (v === null || v === undefined ? "?" : fmtNum.format(v));
 function fmtPct(v, digits = 1) {
   if (v === null || v === undefined) return "?";
@@ -227,6 +229,77 @@ function errorBanner() {
   return parts.join("");
 }
 
+/** Prix courant d'une crypto : direct si dispo, sinon dernier point d'historique. */
+function priceOf(symbol) {
+  const live = state.live[symbol];
+  if (live?.usd) return live.usd;
+  const series = state.history.prices[symbol] || [];
+  return series.length ? series[series.length - 1][1] : null;
+}
+
+/** Frais configurés pour un swap entre deux cryptos (peu importe le sens). */
+function feeFor(a, b) {
+  const s = state.settings;
+  return s.fees[`${a}/${b}`] ?? s.fees[`${b}/${a}`] ?? s.defaultFeePct;
+}
+
+// Carte « Mon portefeuille » : quantités détenues + simulateur de swap
+// (ce que chaque swap donnerait aux prix actuels, frais déduits).
+function portfolioCard() {
+  const s = state.settings;
+  const coins = activeCoins();
+  const inputs = coins
+    .map(
+      (c) => `<div><label>${esc(c.symbol)}</label>
+        <input type="number" min="0" step="any" inputmode="decimal" data-holding="${esc(c.symbol)}"
+          value="${s.holdings[c.symbol] ?? ""}" placeholder="0"></div>`
+    )
+    .join("");
+
+  let totalUsd = 0;
+  const lines = [];
+  for (const c of coins) {
+    const qty = Number(s.holdings[c.symbol]) || 0;
+    const pFrom = priceOf(c.symbol);
+    if (qty <= 0 || !pFrom) continue;
+    totalUsd += qty * pFrom;
+    for (const other of coins) {
+      if (other.symbol === c.symbol) continue;
+      const pTo = priceOf(other.symbol);
+      if (!pTo) continue;
+      const fee = feeFor(c.symbol, other.symbol);
+      const got = ((qty * pFrom) / pTo) * (1 - fee / 100);
+      lines.push(
+        `<div class="swap-line">${fmtQty(qty)} ${esc(c.symbol)} → <b>${fmtQty(got)} ${esc(other.symbol)}</b>
+          <span class="swap-fee">frais ${String(fee).replace(".", ",")} % déduits</span></div>`
+      );
+    }
+  }
+
+  return `<div class="card">
+    <h3>Mon portefeuille</h3>
+    <div class="holdings-row">${inputs}</div>
+    ${
+      lines.length
+        ? `<div class="swap-total">Valeur totale : <b>${fmtPrice(totalUsd)}</b></div>
+           <div class="swap-title">Si tu swapes maintenant :</div>${lines.join("")}`
+        : `<p class="note">Saisis tes quantités pour voir ce que chaque swap donnerait (frais déduits).</p>`
+    }
+  </div>`;
+}
+
+function bindPortfolioInputs() {
+  for (const input of document.querySelectorAll("[data-holding]")) {
+    input.addEventListener("change", () => {
+      const v = Number(input.value);
+      if (v > 0) state.settings.holdings[input.dataset.holding] = v;
+      else delete state.settings.holdings[input.dataset.holding];
+      store.saveSettings(state.settings);
+      render();
+    });
+  }
+}
+
 function coinTrend(symbol) {
   const series = state.history.prices[symbol] || [];
   const now = Date.now();
@@ -241,10 +314,8 @@ function coinTrend(symbol) {
 function renderCoins() {
   const rows = activeCoins()
     .map((coin) => {
-      const live = state.live[coin.symbol];
-      const series = state.history.prices[coin.symbol] || [];
-      const price = live?.usd ?? (series.length ? series[series.length - 1][1] : null);
-      const delta = live?.change24h ?? null;
+      const price = priceOf(coin.symbol);
+      const delta = state.live[coin.symbol]?.change24h ?? null;
       const trend = coinTrend(coin.symbol);
       const arrow = trend === "hausse" ? "↗" : trend === "baisse" ? "↘" : "→";
       const trendClass = trend === "hausse" ? "up" : trend === "baisse" ? "down" : "flat";
@@ -260,7 +331,9 @@ function renderCoins() {
       </div>`;
     })
     .join("");
-  $("#view-coins").innerHTML = errorBanner() + (rows || `<p class="msg-empty">Aucune crypto suivie.</p>`);
+  $("#view-coins").innerHTML =
+    errorBanner() + portfolioCard() + (rows || `<p class="msg-empty">Aucune crypto suivie.</p>`);
+  bindPortfolioInputs();
 }
 
 /** Moyenne mobile glissante (fenêtre en minutes) — O(n), pour le graphique. */

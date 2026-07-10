@@ -35,6 +35,7 @@ export function loadSettings(config) {
     extraCoins: [],
     hiddenSymbols: [],
     notifyInApp: true,
+    holdings: {}, // symbol -> quantité détenue (simulateur de swap)
   };
   const saved = read(SETTINGS_KEY, {});
   return { ...defaults, ...saved, fees: { ...defaults.fees, ...(saved.fees || {}) } };
