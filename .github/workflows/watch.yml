@@ -1,0 +1,44 @@
+# Surveillance des prix + alertes ntfy, toutes les ~5-15 min (cadence réelle
+# du cron GitHub : 5 min demandées, souvent 5 à 15 min effectives).
+name: watch-prices
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Jamais deux collectes en parallèle (évite les conflits de commit).
+concurrency:
+  group: watch-prices
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Collecte + analyse + notifications
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node bot/collect.js
+
+      - name: Commit des données
+        run: |
+          git config user.name "price-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add docs/data/
+          if git diff --cached --quiet; then
+            echo "Rien à committer."
+          else
+            git commit -m "data: mise à jour des prix"
+            git pull --rebase origin ${GITHUB_REF_NAME}
+            git push
+          fi

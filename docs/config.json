@@ -1,0 +1,25 @@
+{
+  "coins": [
+    { "id": "green-satoshi-token", "symbol": "GST", "name": "GST (Solana)" },
+    { "id": "stepn", "symbol": "GMT", "name": "GMT" },
+    { "id": "usd-coin", "symbol": "USDC", "name": "USDC" }
+  ],
+  "pairs": [
+    { "from": "GST", "to": "GMT", "feePct": 2.0 },
+    { "from": "GST", "to": "USDC", "feePct": 2.0 },
+    { "from": "GMT", "to": "USDC", "feePct": 2.0 }
+  ],
+  "analysis": {
+    "smaShortMin": 60,
+    "smaLongMin": 1440,
+    "zScoreTrigger": 2.0,
+    "rsiPeriod": 14,
+    "minNetGainPct": 1.0,
+    "cooldownMin": 240
+  },
+  "refresh": {
+    "botMin": 5,
+    "pwaMin": 2
+  },
+  "historyDays": 30
+}
