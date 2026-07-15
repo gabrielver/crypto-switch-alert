@@ -1,1 +1,1 @@
-{"alerts":[],"cooldowns":{}}
+{"alerts":[{"id":"1784127916468-GMT->GST","t":1784127916468,"from":"GMT","to":"GST","ratio":0.12122948556226965,"netGainPct":1.0235109154056694,"grossGainPct":3.0235109154056694,"feePct":2,"zScore":-2.341975349196565,"rsi":32.74887309957113,"message":"Switch GMT → GST recommandé — gain net estimé +1.0 % (écart +3.0 % vs moyenne 24 h, frais 2 % déduits, z-score -2.3, RSI 33)"}],"cooldowns":{"GMT->GST":1784127916468}}
