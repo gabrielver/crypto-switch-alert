@@ -101,11 +101,13 @@ suivie contre USDC, visible seulement dans l'app.)
 
 | Paramètre (`docs/config.json` → `analysis`) | Rôle | Défaut |
 |---|---|---|
-| `zScoreTrigger` | Écart (en écarts-types vs moyenne 24 h) qui déclenche une alerte | 2.0 |
+| `zScoreTrigger` | Écart (en écarts-types vs la moyenne de référence) qui rend un signal candidat | 2.0 |
 | `minNetGainPct` | Gain net minimum (frais déduits) pour alerter | 1.0 % |
+| `rsiOverbought` / `rsiOversold` | Excès exigé pour confirmer l'écart (monter le premier = moins d'alertes) | 65 / 35 |
+| `maxDestDrop7dPct` | Chute sur 7 j au-delà de laquelle on refuse de basculer vers une crypto | 25 % |
 | `feePct` (par paire) | Frais de swap estimés — **à ajuster selon ton exchange** | 2.0 % |
 | `cooldownMin` | Délai minimum entre deux alertes identiques | 240 min |
-| `smaShortMin` / `smaLongMin` | Fenêtres des moyennes mobiles courte/longue | 60 / 1440 min |
+| `smaShortMin` / `smaLongMin` | Fenêtres des moyennes mobiles courte/longue (référence du z-score) | 60 / 4320 min (3 j) |
 | `refresh.pwaMin` | Rafraîchissement de l'app quand elle est ouverte | 2 min |
 
 Les mêmes seuils sont réglables dans l'écran **Réglages** de l'app pour la vue en
@@ -189,15 +191,29 @@ tu avais, frais du retour compris.
 
 Pour chaque paire (ex : GST/GMT), sur la série du **ratio** de prix :
 
-1. Variations sur 15 min / 1 h / 24 h.
-2. Moyennes mobiles 1 h et 24 h → tendance (hausse / baisse / stable).
-3. **Z-score** du ratio par rapport à sa moyenne 24 h : mesure si l'écart actuel est
-   anormal (au-delà de `zScoreTrigger` écarts-types).
-4. RSI 14 sur le ratio (sur-achat / sur-vente, affiché en confirmation).
-5. Gain net estimé = écart à la moyenne − frais. Alerte seulement si z-score **et**
-   gain net dépassent les seuils → les micro-mouvements absorbés par les frais ne
-   déclenchent rien.
+Ce n'est **pas** « la crypto monte ». L'app ne regarde jamais un prix seul : elle suit le
+**ratio entre deux cryptos** et parie sur un **retour à la moyenne** — « GST est
+anormalement cher face à GMT, l'écart devrait se refermer ». Si les deux montent
+ensemble, rien ne se déclenche.
+
+Détection, puis trois filtres que le signal doit franchir :
+
+1. Variations sur 15 min / 1 h / 24 h, moyennes mobiles courte et longue → tendance.
+2. **Z-score** : de combien d'écarts-types le ratio s'éloigne de sa moyenne de référence
+   (`smaLongMin`, 3 jours par défaut). Au-delà de `zScoreTrigger`, un écart est candidat.
+3. **Filtre rentabilité** : gain net (écart à la moyenne − frais) ≥ `minNetGainPct`,
+   sinon les frais mangent le mouvement.
+4. **Filtre RSI** : l'écart doit être confirmé par un excès réel — RSI ≥ `rsiOverbought`
+   dans le sens from → to, ≤ `rsiOversold` dans l'autre. Un ratio haut mais mou (RSI ~50)
+   est du bruit, pas une opportunité.
+5. **Garde-fou anti-effondrement** : jamais de bascule vers une crypto qui perd plus de
+   `maxDestDrop7dPct` sur 7 jours. Le retour à la moyenne suppose une anomalie passagère ;
+   face à une chute durable, le ratio ne revient jamais et l'« opportunité » est un piège.
 6. Anti-spam : cooldown par sens de switch.
+
+Quand un filtre écarte un signal, l'app et les logs du bot **disent lequel et pourquoi**
+(« Écart détecté mais ignoré : écart non confirmé par le RSI (48) »), au lieu de rester
+silencieux.
 
 L'onglet **Alertes** garde l'historique et affiche pour chaque alerte passée ce que
 l'aller-retour vaudrait aujourd'hui — pour vérifier a posteriori si les recommandations

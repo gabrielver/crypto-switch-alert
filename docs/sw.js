@@ -1,7 +1,7 @@
 // Service worker : cache du shell pour un démarrage instantané et un mode
 // hors-ligne (dernières données connues). Incrémenter VERSION à chaque mise
 // à jour des fichiers du shell pour invalider l'ancien cache.
-const VERSION = "csa-v6";
+const VERSION = "csa-v8";
 const SHELL = [
   "./",
   "index.html",
@@ -19,7 +19,13 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL)));
+  // cache: "reload" force le réseau : sans ça, l'installation peut recopier des
+  // fichiers périmés depuis le cache HTTP du navigateur et figer une vieille version.
+  event.waitUntil(
+    caches
+      .open(VERSION)
+      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))))
+  );
   self.skipWaiting();
 });
 

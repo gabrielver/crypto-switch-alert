@@ -11,9 +11,12 @@
   ],
   "analysis": {
     "smaShortMin": 60,
-    "smaLongMin": 1440,
+    "smaLongMin": 4320,
     "zScoreTrigger": 2.0,
     "rsiPeriod": 14,
+    "rsiOverbought": 65,
+    "rsiOversold": 35,
+    "maxDestDrop7dPct": 25,
     "minNetGainPct": 1.0,
     "cooldownMin": 240
   },

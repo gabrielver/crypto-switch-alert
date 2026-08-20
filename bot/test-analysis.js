@@ -7,6 +7,8 @@ import {
   rsi,
   hindsightGainPct,
   positionReturn,
+  rejectionReason,
+  windowLabel,
   formatSignalMessage,
 } from "../docs/js/analysis.js";
 
@@ -23,6 +25,9 @@ const cfg = {
   smaLongMin: 1440,
   zScoreTrigger: 2.0,
   rsiPeriod: 14,
+  rsiOverbought: 65,
+  rsiOversold: 35,
+  maxDestDrop7dPct: 25,
   minNetGainPct: 1.0,
 };
 const pair = { from: "GST", to: "GMT", feePct: 2.0 };
@@ -135,6 +140,71 @@ function flatSeries(base, noisePct = 0.3) {
   );
 
   check("position sans prix : null", positionReturn(pos, 0, 0.0077, 2, 1) === null);
+}
+
+// 10. Filtre RSI : un écart installé mais sans excès de momentum est écarté.
+{
+  const s = flatSeries(2.0);
+  // Plateau haut qui oscille : z-score très élevé, mais RSI ~50 (ni sur-achat ni
+  // sur-vente) — l'écart n'est pas confirmé, on ne switche pas.
+  for (let i = s.length - 20; i < s.length; i++) s[i][1] = 2.18 * (1 + (i % 2 ? 0.0005 : -0.0005));
+  const { indicators, signal } = analyzePair(s, pair, cfg, now);
+  check(
+    "RSI tiède malgré z-score élevé : signal filtré",
+    signal === null &&
+      indicators.rejected === "rsi" &&
+      indicators.zScore > cfg.zScoreTrigger &&
+      indicators.rsi < cfg.rsiOverbought
+  );
+  check("raison lisible pour le RSI", /RSI/.test(rejectionReason(indicators, pair)));
+
+  // Même niveau de ratio, mais atteint par une vraie poussée → RSI élevé, ça passe.
+  const pushed = flatSeries(2.0);
+  for (let i = pushed.length - 20; i < pushed.length; i++) {
+    pushed[i][1] = 2.0 * (1 + 0.09 * ((i - (pushed.length - 21)) / 20));
+  }
+  const r2 = analyzePair(pushed, pair, cfg, now);
+  check("poussée franche : RSI confirme, signal conservé", r2.signal !== null && r2.indicators.rsi >= cfg.rsiOverbought);
+}
+
+// 11. Garde-fou anti-effondrement : ne pas basculer vers une crypto qui s'écroule.
+{
+  const s = flatSeries(2.0);
+  for (let i = s.length - 12; i < s.length; i++) {
+    const p = (i - (s.length - 12)) / 11;
+    s[i][1] = 2.0 * (1 + 0.08 * p);
+  }
+  // GMT (destination) perd 40 % en 7 jours.
+  const crash = [];
+  for (let i = 7 * 24; i >= 0; i--) {
+    crash.push([now - i * 60 * MIN, 1 * (1 - 0.4 * ((7 * 24 - i) / (7 * 24)))]);
+  }
+  const stable = [[now - 7 * 24 * 60 * MIN, 1], [now, 1]];
+
+  const blocked = analyzePair(s, pair, cfg, now, { GST: stable, GMT: crash });
+  check(
+    "destination en chute : signal bloqué",
+    blocked.signal === null && blocked.indicators.rejected === "chute"
+  );
+  check("raison lisible pour la chute", /effondre/.test(rejectionReason(blocked.indicators, pair)));
+
+  // Même écart, destination saine → le signal passe.
+  const ok = analyzePair(s, pair, cfg, now, { GST: stable, GMT: stable });
+  check("destination saine : signal conservé", ok.signal !== null);
+  check("pas de blocage sans données de prix", analyzePair(s, pair, cfg, now).signal !== null);
+}
+
+// 12. Fenêtre de référence configurable, reflétée dans les messages.
+{
+  const longCfg = { ...cfg, smaLongMin: 4320 };
+  const s = [];
+  for (let i = 3 * 24 * 12; i >= 0; i--) s.push([now - i * 5 * MIN, 2.0 + Math.sin(i * 1.7) * 0.006]);
+  for (let i = s.length - 12; i < s.length; i++) s[i][1] = 2.0 * 1.08;
+  const { indicators, signal } = analyzePair(s, pair, longCfg, now);
+  check("fenêtre 3 j : libellé propagé", indicators.refLabel === "3 j" && signal?.refLabel === "3 j");
+  check("message reprend la fenêtre", formatSignalMessage(signal).includes("moyenne 3 j"));
+  check("windowLabel : 1440 → 24 h", windowLabel(1440) === "1 j" || windowLabel(1440) === "24 h");
+  check("windowLabel : 10080 → 7 j", windowLabel(10080) === "7 j");
 }
 
 console.log(failures === 0 ? "\nTous les tests passent." : `\n${failures} test(s) en échec.`);

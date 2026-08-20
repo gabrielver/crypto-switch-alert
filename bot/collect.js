@@ -19,9 +19,8 @@ import { fileURLToPath } from "node:url";
 // vault.js utilise l'API WebCrypto du navigateur : la fournir avant son import.
 if (!globalThis.crypto?.subtle) globalThis.crypto = webcrypto;
 
-const { buildRatioSeries, analyzePair, formatSignalMessage, positionReturn } = await import(
-  "../docs/js/analysis.js"
-);
+const { buildRatioSeries, analyzePair, formatSignalMessage, positionReturn, rejectionReason } =
+  await import("../docs/js/analysis.js");
 const { unseal, positionsTopic } = await import("../docs/js/vault.js");
 
 // fetch natif à partir de Node 18 ; repli https pour les Node plus anciens en local.
@@ -314,11 +313,20 @@ async function main() {
     const sTo = history.prices[pair.to];
     if (!sFrom || !sTo) continue;
     const ratioSeries = buildRatioSeries(sFrom, sTo);
-    const { indicators, signal } = analyzePair(ratioSeries, pair, config.analysis, now);
+    const { indicators, signal } = analyzePair(
+      ratioSeries,
+      pair,
+      config.analysis,
+      now,
+      history.prices // garde-fou anti-effondrement sur 7 j
+    );
     const label = `${pair.from}/${pair.to}`;
+    const reason = rejectionReason(indicators, pair);
     console.log(
       `${label}: ratio ${indicators.ratio?.toPrecision(5)} | z ${indicators.zScore?.toFixed(2) ?? "?"} | ` +
-        `tendance ${indicators.trend ?? "?"} | ${signal ? "OPPORTUNITÉ" : "neutre"}`
+        `RSI ${indicators.rsi === null ? "?" : Math.round(indicators.rsi)} | ` +
+        `tendance ${indicators.trend ?? "?"} | ` +
+        `${signal ? "OPPORTUNITÉ" : reason ? `filtré (${reason})` : "neutre"}`
     );
     if (!signal) continue;
 

@@ -10,6 +10,7 @@ import {
   formatSignalMessage,
   hindsightGainPct,
   positionReturn,
+  rejectionReason,
   sma,
   trendOf,
   windowValues,
@@ -167,7 +168,13 @@ function computeAnalyses() {
       state.history.prices[pair.from] || [],
       state.history.prices[pair.to] || []
     );
-    const { indicators, signal } = analyzePair(ratioSeries, { ...pair, feePct }, cfg);
+    const { indicators, signal } = analyzePair(
+      ratioSeries,
+      { ...pair, feePct },
+      cfg,
+      Date.now(),
+      state.history.prices // garde-fou anti-effondrement sur 7 j
+    );
     return { pair, feePct, ratioSeries, indicators, signal };
   });
 }
@@ -521,7 +528,7 @@ function adviceCard() {
       <h3>💡 Il est conseillé d'échanger tes ${esc(r.from)} contre du ${esc(r.to)}</h3>
       <p class="advice-text">Tes <b>${fmtQty(r.qty)} ${esc(r.from)}</b> donneraient
       <b>≈ ${fmtQty(r.got)} ${esc(r.to)}</b>, car le ratio ${esc(r.from)}/${esc(r.to)} s'écarte de
-      <b>${fmtPct(r.grossGainPct)}</b> de sa moyenne 24 h en ta faveur
+      <b>${fmtPct(r.grossGainPct)}</b> de sa moyenne ${esc(r.refLabel ?? "24 h")} en ta faveur
       (z-score ${r.zScore.toFixed(1)}${r.rsi !== null && r.rsi !== undefined ? `, RSI ${Math.round(r.rsi)}` : ""}),
       soit <b class="up">${fmtPct(r.netGainPct)} net</b> après ${String(r.feePct).replace(".", ",")} % de frais.
       Si le ratio revient vers sa moyenne, l'aller-retour laisse ce profit en ${esc(r.from)}.</p>
@@ -544,9 +551,14 @@ function adviceCard() {
   const bestTxt = best
     ? ` Le mieux placé serait ${esc(best.from)} → ${esc(best.to)} (<b class="${pctClass(best.net)}">${fmtPct(best.net)}</b> net), en dessous de tes seuils.`
     : "";
+  // Un écart existait mais un filtre l'a écarté : le dire plutôt que rester muet.
+  const filtered = state.analyses
+    .map((a) => rejectionReason(a.indicators, a.pair))
+    .filter(Boolean)[0];
+  const filteredTxt = filtered ? ` Un écart a été écarté : ${esc(filtered)}.` : "";
   return `<div class="card advice-card"><h3>💡 Conseil</h3>
     <p class="advice-text">Rien à faire pour l'instant : aucun swap suffisamment rentable détecté
-    sur tes cryptos, frais déduits.${bestTxt}</p></div>`;
+    sur tes cryptos, frais déduits.${bestTxt}${filteredTxt}</p></div>`;
 }
 
 // Carte « Mon portefeuille » : quantités détenues + simulateur de swap
@@ -679,9 +691,12 @@ function renderPairs() {
       const badge = a.signal
         ? `<span class="badge badge-opp">🔔 Opportunité</span>`
         : `<span class="badge badge-neutral">Neutre</span>`;
+      const reason = rejectionReason(ind, a.pair);
       const signalLine = a.signal
         ? `<p class="signal-line up"><b>${esc(formatSignalMessage(a.signal))}</b></p>`
-        : "";
+        : reason
+          ? `<p class="signal-line"><span class="alert-source">filtré</span> Écart détecté mais ignoré : ${esc(reason)}.</p>`
+          : "";
       // Gain net estimé dans chaque sens si on switchait maintenant (frais déduits).
       let gainsLine = "";
       if (ind.dataOk && ind.smaLong) {
@@ -709,7 +724,7 @@ function renderPairs() {
         <canvas class="chart" data-idx="${idx}"></canvas>
         <div class="legend">
           <span class="l1"><i></i>Ratio ${esc(a.pair.from)}/${esc(a.pair.to)}</span>
-          <span class="l2"><i></i>Moyenne 24 h</span>
+          <span class="l2"><i></i>Moyenne ${esc(ind.refLabel ?? "24 h")}</span>
         </div>
       </div>`;
     })
