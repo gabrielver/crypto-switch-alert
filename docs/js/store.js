@@ -38,6 +38,8 @@ export function loadSettings(config) {
     notifyInApp: true,
     holdings: {}, // symbol -> quantité détenue (simulateur de swap)
     minReturnGainPct: 1.0, // gain minimum vs ta quantité de départ pour re-switcher
+    ntfyTopic: "", // topic ntfy : sert aussi de secret pour le canal chiffré des positions
+    lastSyncHash: "", // empreinte des positions déjà publiées (évite de republier pour rien)
   };
   const saved = read(SETTINGS_KEY, {});
   return { ...defaults, ...saved, fees: { ...defaults.fees, ...(saved.fees || {}) } };

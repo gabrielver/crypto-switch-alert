@@ -4,6 +4,8 @@
 // 3. Analyse chaque paire (module partagé docs/js/analysis.js).
 // 4. Envoie une notification push via ntfy.sh si opportunité (env NTFY_TOPIC).
 // 5. Enregistre l'alerte dans docs/data/alerts.json (avec anti-spam).
+// 6. Récupère les switchs en cours publiés chiffrés par la PWA et alerte quand
+//    leur retour devient gagnant — c'est ce qui marche app fermée.
 //
 // Usage local :  node bot/collect.js          (sans notif si NTFY_TOPIC absent)
 //                NTFY_TOPIC=mon-topic node bot/collect.js
@@ -11,8 +13,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import https from "node:https";
+import { webcrypto } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { buildRatioSeries, analyzePair, formatSignalMessage } from "../docs/js/analysis.js";
+
+// vault.js utilise l'API WebCrypto du navigateur : la fournir avant son import.
+if (!globalThis.crypto?.subtle) globalThis.crypto = webcrypto;
+
+const { buildRatioSeries, analyzePair, formatSignalMessage, positionReturn } = await import(
+  "../docs/js/analysis.js"
+);
+const { unseal, positionsTopic } = await import("../docs/js/vault.js");
 
 // fetch natif à partir de Node 18 ; repli https pour les Node plus anciens en local.
 const fetchFn =
@@ -30,6 +40,7 @@ const fetchFn =
               ok: res.statusCode >= 200 && res.statusCode < 300,
               status: res.statusCode,
               json: async () => JSON.parse(body),
+              text: async () => body,
             })
           );
         }
@@ -44,6 +55,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_PATH = path.join(ROOT, "docs", "config.json");
 const HISTORY_PATH = path.join(ROOT, "docs", "data", "history.json");
 const ALERTS_PATH = path.join(ROOT, "docs", "data", "alerts.json");
+// Positions de l'utilisateur : stockées chiffrées, jamais en clair dans le repo.
+const POSITIONS_PATH = path.join(ROOT, "docs", "data", "positions.json");
 
 const MIN = 60 * 1000;
 const API = "https://api.coingecko.com/api/v3";
@@ -118,18 +131,126 @@ function pruneSeries(series, now, historyDays) {
   return out;
 }
 
-async function sendNtfy(topic, signal) {
-  const message = formatSignalMessage(signal);
+async function pushNtfy(topic, title, message, tags = "arrows_counterclockwise") {
   const res = await fetchFn(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
     method: "POST",
-    headers: {
-      Title: `Switch ${signal.from} -> ${signal.to} : ${signal.netGainPct >= 0 ? "+" : ""}${signal.netGainPct.toFixed(1)} %`,
-      Priority: "high",
-      Tags: "arrows_counterclockwise,chart_with_upwards_trend",
-    },
+    headers: { Title: title, Priority: "high", Tags: tags },
     body: message,
   });
   if (!res.ok) throw new Error(`ntfy HTTP ${res.status}`);
+}
+
+const signedPct = (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)} %`;
+
+function sendNtfy(topic, signal) {
+  return pushNtfy(
+    topic,
+    `Switch ${signal.from} -> ${signal.to} : ${signedPct(signal.netGainPct)}`,
+    formatSignalMessage(signal),
+    "arrows_counterclockwise,chart_with_upwards_trend"
+  );
+}
+
+/**
+ * Récupère les switchs en cours publiés chiffrés par la PWA sur son canal dérivé.
+ * Le dépôt du repo (chiffré) fait foi si aucun message récent n'est disponible :
+ * ntfy ne garde ses messages que quelques heures, le repo garde la position.
+ */
+async function loadPositions(topic, now) {
+  const stored = readJson(POSITIONS_PATH, null);
+  let best = stored?.blob ? { blob: stored.blob, t: stored.updated || 0 } : null;
+
+  try {
+    const channel = await positionsTopic(topic);
+    const res = await fetchFn(`https://ntfy.sh/${channel}/json?poll=1&since=12h`, {
+      headers: { accept: "application/json" },
+    });
+    if (res.ok) {
+      const raw = await res.text();
+      for (const line of raw.trim().split("\n").filter(Boolean)) {
+        let msg;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (!msg.message) continue;
+        const payload = await unseal(msg.message, topic);
+        // Un message qu'on ne sait pas déchiffrer n'est pas pour nous : on l'ignore.
+        if (payload?.t && payload.t > (best?.t || 0)) best = { blob: msg.message, t: payload.t };
+      }
+    }
+  } catch (err) {
+    console.warn(`Canal des positions injoignable (${err.message}) — dépôt du repo utilisé.`);
+  }
+
+  if (!best) return { payload: null, blob: null, updated: 0 };
+  const payload = await unseal(best.blob, topic);
+  if (!payload) {
+    console.warn("Positions illisibles (topic différent de celui de l'app ?) — ignorées.");
+    return { payload: null, blob: null, updated: 0 };
+  }
+  console.log(
+    `Positions reçues de l'app : ${payload.positions?.length || 0} en cours ` +
+      `(publiées il y a ${Math.round((now - payload.t) / MIN)} min).`
+  );
+  return { payload, blob: best.blob, updated: best.t };
+}
+
+/**
+ * Alerte quand le retour d'un switch validé redevient gagnant vs la quantité de
+ * départ. Les messages ne contiennent que des pourcentages : aucun montant ne
+ * transite en clair par ntfy.
+ */
+async function checkPositions(payload, priceOf, config, alertsDb, topic, now) {
+  const target = payload.minReturnGainPct ?? config.analysis.minNetGainPct;
+  const engaged = new Set();
+  for (const pos of payload.positions || []) {
+    engaged.add(pos.from).add(pos.to);
+    const feePct =
+      config.pairs.find(
+        (p) =>
+          (p.from === pos.from && p.to === pos.to) || (p.from === pos.to && p.to === pos.from)
+      )?.feePct ?? 2;
+    const st = positionReturn(pos, priceOf(pos.from), priceOf(pos.to), feePct, target);
+    if (!st) continue;
+    console.log(
+      `Position ${pos.from}->${pos.to} : retour ${signedPct(st.profitPct)} ` +
+        `(objectif ${signedPct(target)}) ${st.ready ? "PRÊTE" : "en attente"}`
+    );
+    if (!st.ready) continue;
+
+    const key = `return-${pos.id}`;
+    if (now - (alertsDb.cooldowns[key] || 0) < config.analysis.cooldownMin * MIN) continue;
+    alertsDb.cooldowns[key] = now;
+
+    const message =
+      `Re-switch ${pos.to} → ${pos.from} : ${signedPct(st.profitPct)} vs ton entrée, ` +
+      `frais du retour déduits. Ouvre l'app pour les montants.`;
+    alertsDb.alerts.unshift({
+      id: `${now}-${key}`,
+      t: now,
+      from: pos.to,
+      to: pos.from,
+      netGainPct: st.profitPct,
+      message,
+      source: "bot-position",
+    });
+    if (topic) {
+      try {
+        await pushNtfy(
+          topic,
+          `Re-switch ${pos.to} -> ${pos.from} : ${signedPct(st.profitPct)}`,
+          message,
+          "moneybag"
+        );
+        console.log("  Notification de retour envoyée.");
+      } catch (err) {
+        console.error(`  Échec envoi ntfy : ${err.message}`);
+      }
+    }
+  }
+  return engaged;
 }
 
 async function main() {
@@ -168,7 +289,27 @@ async function main() {
   const topic = process.env.NTFY_TOPIC;
   if (!topic) console.log("NTFY_TOPIC absent : analyse sans notification push.");
 
+  // Switchs en cours de l'utilisateur : ils passent avant les signaux de marché.
+  const priceOf = (symbol) => {
+    const series = history.prices[symbol];
+    return series?.length ? series[series.length - 1][1] : null;
+  };
+  let engaged = new Set();
+  let positionsBlob = null;
+  if (topic) {
+    const { payload, blob, updated } = await loadPositions(topic, now);
+    if (payload) {
+      positionsBlob = { blob, updated };
+      engaged = await checkPositions(payload, priceOf, config, alertsDb, topic, now);
+    }
+  }
+
   for (const pair of config.pairs) {
+    // Crypto déjà engagée dans un switch : c'est son retour qui compte, pas le marché.
+    if (engaged.has(pair.from) || engaged.has(pair.to)) {
+      console.log(`${pair.from}/${pair.to}: ignorée (position en cours)`);
+      continue;
+    }
     const sFrom = history.prices[pair.from];
     const sTo = history.prices[pair.to];
     if (!sFrom || !sTo) continue;
@@ -219,6 +360,11 @@ async function main() {
   alertsDb.alerts = alertsDb.alerts.slice(0, MAX_ALERTS_KEPT);
   writeJson(HISTORY_PATH, history);
   writeJson(ALERTS_PATH, alertsDb);
+  // Positions re-stockées telles quelles (chiffrées) : le repo sert de mémoire
+  // longue durée, ntfy n'ayant qu'un cache de quelques heures.
+  if (positionsBlob) {
+    writeJson(POSITIONS_PATH, { updated: positionsBlob.updated, blob: positionsBlob.blob });
+  }
   console.log("Données écrites dans docs/data/.");
 }
 

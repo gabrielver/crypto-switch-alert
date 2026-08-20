@@ -151,6 +151,35 @@ prix **toi** tu es entré. C'est le suivi de switchs qui répond à « quand rev
 
 Le portefeuille est mis à jour automatiquement à chaque validation.
 
+### Alertes de retour quand l'app est fermée (sans token, sans fuite)
+
+Le bot tourne sur GitHub, tes positions vivent sur ton téléphone : il faut un pont.
+Ici, pas de token GitHub à coller dans l'app et aucun montant en clair.
+
+1. Dans **Réglages → Topic ntfy**, saisis ton topic (le même que le secret `NTFY_TOPIC`).
+2. L'app chiffre tes switchs en cours (AES-256-GCM, clé dérivée du topic par PBKDF2) et
+   les publie sur un **canal ntfy dérivé** : son nom est un SHA-256 du topic, donc
+   connaître ton topic d'alerte ne permet pas de le trouver.
+3. Le bot, qui connaît le topic par le secret GitHub, dérive le même canal, déchiffre, et
+   range le paquet **toujours chiffré** dans `docs/data/positions.json`. Le repo peut
+   rester public : ce fichier est illisible sans le topic.
+4. Toutes les 5-15 min, le bot compare les prix à ton taux d'entrée et t'envoie la notif
+   quand le retour dépasse ton objectif — app fermée comprise.
+
+ntfy ne garde ses messages que quelques heures ; le dépôt chiffré dans le repo sert de
+mémoire longue durée, donc une position reste suivie même si tu n'ouvres pas l'app
+pendant des jours.
+
+**Le texte des notifications ne contient qu'un pourcentage** (« Re-switch GMT → GST :
++9,1 % vs ton entrée »), jamais tes montants : lui seul transite en clair, puisque ton
+téléphone doit l'afficher.
+
+Tant qu'une position est ouverte, le bot **ignore les signaux de marché** sur les cryptos
+concernées : un seul message à la fois, pas de conseil contradictoire.
+
+Sans topic saisi dans l'app, tout fonctionne comme avant : alertes de retour in-app
+uniquement, alertes de marché par ntfy.
+
 **Pourquoi tu pouvais switcher à perte avant :** les alertes de marché comparent le ratio
 à sa moyenne, pas à ton point d'entrée. Avec le suivi, la référence devient ta propre
 quantité de départ — re-switcher n'est conseillé que si tu récupères **plus** que ce que

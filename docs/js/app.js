@@ -15,6 +15,7 @@ import {
   windowValues,
 } from "./analysis.js";
 import { loadLocalJson, simplePrice, marketChart } from "./api.js";
+import { seal, positionsTopic } from "./vault.js";
 import * as store from "./store.js";
 import { drawChart } from "./chart.js";
 
@@ -31,6 +32,7 @@ const state = {
   localAlerts: store.loadLocalAlerts(),
   positions: store.loadPositions(),
   form: null, // { mode: "open"|"close", from, to, id?, qtyFrom?, qtyTo? }
+  syncMsg: "",
   usingLocalCache: false,
   view: "coins",
   range: "7j",
@@ -141,6 +143,7 @@ async function refresh() {
 
     computeAnalyses();
     maybeNotify();
+    publishPositions(); // no-op si rien n'a changé depuis la dernière publication
     state.lastRefresh = now;
   } catch (err) {
     state.error = `Erreur de rafraîchissement : ${err.message}`;
@@ -276,6 +279,38 @@ function feeFor(a, b) {
 
 const openPositions = () => state.positions.filter((p) => !p.closed);
 
+/**
+ * Publie les positions ouvertes, chiffrées, sur le canal ntfy dérivé du topic.
+ * C'est le seul lien app → bot : pas de token GitHub, rien en clair.
+ * Le bot les déchiffre et prend le relais des alertes quand l'app est fermée.
+ */
+async function publishPositions(force = false) {
+  const s = state.settings;
+  const topic = (s.ntfyTopic || "").trim();
+  if (!topic) return;
+  const open = openPositions();
+  const hash = JSON.stringify(open.map((p) => [p.id, p.qtyFrom, p.qtyTo])) + s.minReturnGainPct;
+  if (!force && hash === s.lastSyncHash) return;
+  try {
+    const blob = await seal(
+      { t: Date.now(), minReturnGainPct: s.minReturnGainPct, positions: open },
+      topic
+    );
+    const res = await fetch(`https://ntfy.sh/${await positionsTopic(topic)}`, {
+      method: "POST",
+      // Sans priorité ni titre : ce canal est un dépôt de données, pas une alerte.
+      headers: { Priority: "min", Tags: "lock" },
+      body: blob,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    s.lastSyncHash = hash;
+    state.syncMsg = `Positions synchronisées avec le bot à ${new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}.`;
+  } catch (err) {
+    state.syncMsg = `Synchronisation impossible (${err.message}) — nouvel essai au prochain changement.`;
+  }
+  store.saveSettings(s);
+}
+
 /** État actuel d'une position ouverte : ce que le retour rapporterait maintenant. */
 function posStatus(pos) {
   return positionReturn(
@@ -355,6 +390,7 @@ function bindSwitchForm() {
     store.saveSettings(s);
     state.form = null;
     render();
+    publishPositions().then(render); // le bot prend le relais app fermée
   });
 }
 
@@ -815,8 +851,15 @@ function renderSettings() {
       <h3>Notifications</h3>
       <p class="note" style="margin-top:0">Notifications dans l'app : ${notifState}.</p>
       <button class="btn btn-ghost" id="notif-btn">Autoriser les notifications</button>
-      <p class="note">Les alertes quand l'app est <b>fermée</b> passent par l'app gratuite
-      <b>ntfy</b> (voir le README, section notifications).</p>
+      <label>Topic ntfy (alertes quand l'app est fermée)</label>
+      <input type="text" id="set-topic" autocomplete="off" spellcheck="false"
+        placeholder="le même que le secret NTFY_TOPIC" value="${esc(s.ntfyTopic || "")}">
+      <button class="btn" id="save-topic">Enregistrer et synchroniser</button>
+      ${state.syncMsg ? `<p class="note">${esc(state.syncMsg)}</p>` : ""}
+      <p class="note">Ce topic sert aussi de clé : tes switchs en cours sont
+      <b>chiffrés</b> puis déposés sur un canal dérivé (nom non devinable) que seul le bot
+      sait lire. Il peut alors t'alerter app fermée quand le retour devient gagnant.
+      Aucun montant ne circule en clair, et les notifications n'affichent qu'un pourcentage.</p>
     </div>`;
 
   $("#save-settings").addEventListener("click", () => {
@@ -867,6 +910,16 @@ function renderSettings() {
   }
   $("#notif-btn").addEventListener("click", async () => {
     if ("Notification" in window) await Notification.requestPermission();
+    render();
+  });
+
+  $("#save-topic").addEventListener("click", async () => {
+    s.ntfyTopic = $("#set-topic").value.trim();
+    s.lastSyncHash = "";
+    store.saveSettings(s);
+    state.syncMsg = s.ntfyTopic ? "Synchronisation en cours…" : "Topic effacé : alertes in-app seulement.";
+    render();
+    await publishPositions(true);
     render();
   });
 }

@@ -5,6 +5,6 @@
   "description": "Surveillance de prix crypto et alertes de switch (GST/GMT/USDC) — 0 dépendance",
   "scripts": {
     "collect": "node bot/collect.js",
-    "test": "node bot/test-analysis.js"
+    "test": "node bot/test-analysis.js && node bot/test-vault.js"
   }
 }
