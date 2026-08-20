@@ -186,6 +186,32 @@ export function formatSignalMessage(signal) {
 }
 
 /**
+ * Suivi d'un switch réellement effectué : que rapporterait le retour maintenant ?
+ *
+ * Référence = TA quantité de départ (pas la moyenne du marché) et TON taux
+ * d'entrée réel (frais de l'exchange déjà compris dans qtyTo).
+ *
+ * @param {{from,to,qtyFrom,qtyTo}} pos  switch validé (donné qtyFrom, reçu qtyTo)
+ * @param {number} priceFrom  prix actuel de la crypto de départ
+ * @param {number} priceTo    prix actuel de la crypto reçue
+ * @param {number} feePct     frais estimés du switch retour
+ * @param {number} targetPct  gain minimum pour conseiller le retour
+ * @returns {{qtyBack, profitPct, missingPct, ready}|null}
+ */
+export function positionReturn(pos, priceFrom, priceTo, feePct, targetPct) {
+  if (!priceFrom || !priceTo || !pos.qtyFrom || !pos.qtyTo) return null;
+  // Reconvertir tout le montant reçu vers la crypto de départ, frais déduits.
+  const qtyBack = ((pos.qtyTo * priceTo) / priceFrom) * (1 - feePct / 100);
+  const profitPct = (qtyBack / pos.qtyFrom - 1) * 100;
+  return {
+    qtyBack,
+    profitPct,
+    missingPct: targetPct - profitPct,
+    ready: profitPct >= targetPct,
+  };
+}
+
+/**
  * Gain hypothétique si l'alerte avait été suivie, au ratio actuel.
  * Après un switch from → to au ratio r0, revenir vers `from` au ratio actuel r
  * multiplie la quantité de `from` par r0 / r (avant frais du retour).

@@ -92,6 +92,14 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 12px 24px; }
 .advice-text { margin: 6px 0 0; font-size: 0.87rem; color: var(--ink-2); }
 .advice-text b { color: var(--ink); }
 
+/* Switchs en cours (positions) */
+.form-card { border-color: var(--accent); }
+.pos-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.pos-row:last-child { border-bottom: none; }
+.pos-head { font-size: 0.88rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pos-status { font-size: 0.83rem; color: var(--ink-2); margin: 3px 0 6px; }
+.pos-ready .pos-head { color: var(--good); }
+
 /* Portefeuille & simulateur de swap */
 .holdings-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-top: 6px; }
 .holdings-row label { display: block; font-size: 0.75rem; color: var(--ink-2); margin-bottom: 3px; font-weight: 600; }

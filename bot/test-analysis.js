@@ -6,6 +6,7 @@ import {
   buildRatioSeries,
   rsi,
   hindsightGainPct,
+  positionReturn,
   formatSignalMessage,
 } from "../docs/js/analysis.js";
 
@@ -112,6 +113,28 @@ function flatSeries(base, noisePct = 0.3) {
 {
   const g = hindsightGainPct(2.2, 2.0, 2.0);
   check("hindsight : +8 % net (10 % - 2 % de frais)", Math.abs(g - 8) < 0.01);
+}
+
+// 9. Suivi de position : switch 1000 GST (0,001 $) → 130 GMT (0,0077 $).
+{
+  const pos = { from: "GST", to: "GMT", qtyFrom: 1000, qtyTo: 130 };
+  // Prix inchangés : le retour reperd les frais → perte, pas de re-switch conseillé.
+  const flat = positionReturn(pos, 0.001, 0.0077, 2, 1);
+  check("position à prix inchangés : perte, pas prête", !flat.ready && flat.profitPct < 0);
+
+  // GMT monte de 10 % face au GST → retour gagnant.
+  const up = positionReturn(pos, 0.001, 0.00847, 2, 1);
+  check("position GMT +10 % : prête à re-switcher", up.ready && up.profitPct > 6);
+  check("position GMT +10 % : quantité rendue > départ", up.qtyBack > pos.qtyFrom);
+
+  // Objectif à 20 % : pas encore atteint, manque bien la différence.
+  const strict = positionReturn(pos, 0.001, 0.00847, 2, 20);
+  check(
+    "objectif 20 % : pas prête, manque calculé",
+    !strict.ready && Math.abs(strict.missingPct - (20 - up.profitPct)) < 0.001
+  );
+
+  check("position sans prix : null", positionReturn(pos, 0, 0.0077, 2, 1) === null);
 }
 
 console.log(failures === 0 ? "\nTous les tests passent." : `\n${failures} test(s) en échec.`);

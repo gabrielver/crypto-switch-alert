@@ -130,6 +130,32 @@ affiche alors :
 - **Le simulateur** : ce que chaque swap donnerait aux prix actuels, frais déduits
   (ex : « 1 000 GST → 126,9 GMT »).
 
+## Suivi des switchs (le plus important)
+
+Une alerte de marché dit « le ratio est anormalement haut ». Elle ne sait pas à quel
+prix **toi** tu es entré. C'est le suivi de switchs qui répond à « quand revendre » :
+
+1. L'app conseille un switch (ex : GST → GMT). Tu le fais sur ton exchange.
+2. Tu cliques **« J'ai fait ce switch »** et tu saisis les montants réels
+   (donné 1 000 GST / reçu 130 GMT). Les frais que l'exchange t'a réellement pris sont
+   ainsi inclus dans ton taux d'entrée — pas besoin de les estimer.
+3. L'app surveille alors le **retour** : à chaque rafraîchissement, elle calcule ce que
+   te rendrait le re-switch GMT → GST, frais déduits, et le compare à tes **1 000 GST de
+   départ**. Tant que c'est en dessous de ton objectif, elle affiche « Patiente, ne
+   re-switche pas encore » avec le manque exact.
+4. Dès que le retour dépasse ton objectif (réglage *Gain minimum pour re-switcher*,
+   1 % par défaut), tu reçois l'alerte « Re-switche maintenant : 1 080 GST récupérés
+   contre 1 000 investis (+8 %) ».
+5. Tu valides le retour, la position se ferme et le profit **réel** est archivé dans
+   « Terminés ».
+
+Le portefeuille est mis à jour automatiquement à chaque validation.
+
+**Pourquoi tu pouvais switcher à perte avant :** les alertes de marché comparent le ratio
+à sa moyenne, pas à ton point d'entrée. Avec le suivi, la référence devient ta propre
+quantité de départ — re-switcher n'est conseillé que si tu récupères **plus** que ce que
+tu avais, frais du retour compris.
+
 ## Comment sont détectées les opportunités ?
 
 Pour chaque paire (ex : GST/GMT), sur la série du **ratio** de prix :

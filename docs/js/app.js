@@ -9,6 +9,7 @@ import {
   buildRatioSeries,
   formatSignalMessage,
   hindsightGainPct,
+  positionReturn,
   sma,
   trendOf,
   windowValues,
@@ -28,6 +29,8 @@ const state = {
   analyses: [], // [{ pair, feePct, ratioSeries, indicators, signal }]
   botAlerts: [],
   localAlerts: store.loadLocalAlerts(),
+  positions: store.loadPositions(),
+  form: null, // { mode: "open"|"close", from, to, id?, qtyFrom?, qtyTo? }
   usingLocalCache: false,
   view: "coins",
   range: "7j",
@@ -171,8 +174,33 @@ function computeAnalyses() {
 function maybeNotify() {
   const cooldowns = store.loadNotifCooldowns();
   const now = Date.now();
+
+  // Priorité : boucler un switch déjà fait (référence = ta quantité de départ).
+  for (const pos of openPositions()) {
+    const st = posStatus(pos);
+    if (!st?.ready) continue;
+    const key = `return-${pos.id}`;
+    if (now - (cooldowns[key] || 0) < state.settings.cooldownMin * MIN) continue;
+    cooldowns[key] = now;
+    const message =
+      `Re-switch ${pos.to} → ${pos.from} : ${fmtQty(st.qtyBack)} ${pos.from} récupérés ` +
+      `contre ${fmtQty(pos.qtyFrom)} investis (${fmtPct(st.profitPct)}, frais déduits)`;
+    state.localAlerts.unshift({
+      id: `${now}-${key}`,
+      t: now,
+      from: pos.to,
+      to: pos.from,
+      netGainPct: st.profitPct,
+      message,
+      source: "app",
+    });
+    notify(`Re-switch ${pos.to} → ${pos.from}`, message);
+  }
+
   for (const a of state.analyses) {
     if (!a.signal) continue;
+    // Une position déjà ouverte sur cette crypto : c'est son retour qui compte.
+    if (openPositions().some((p) => p.to === a.signal.from || p.from === a.signal.from)) continue;
     const key = `${a.signal.from}->${a.signal.to}`;
     if (now - (cooldowns[key] || 0) < state.settings.cooldownMin * MIN) continue;
     cooldowns[key] = now;
@@ -189,19 +217,20 @@ function maybeNotify() {
       message,
       source: "app",
     });
-    if (state.settings.notifyInApp && "Notification" in window && Notification.permission === "granted") {
-      try {
-        new Notification(`Switch ${a.signal.from} → ${a.signal.to}`, {
-          body: message,
-          icon: "icons/icon-192.png",
-        });
-      } catch {
-        /* certains Android n'autorisent que les notifications via service worker */
-      }
-    }
+    notify(`Switch ${a.signal.from} → ${a.signal.to}`, message);
   }
   store.saveLocalAlerts(state.localAlerts);
   store.saveNotifCooldowns(cooldowns);
+}
+
+function notify(title, body) {
+  if (!state.settings.notifyInApp || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  try {
+    new Notification(title, { body, icon: "icons/icon-192.png" });
+  } catch {
+    /* certains Android n'autorisent que les notifications via service worker */
+  }
 }
 
 // -------------------------------------------------------------------- rendu
@@ -243,10 +272,186 @@ function feeFor(a, b) {
   return s.fees[`${a}/${b}`] ?? s.fees[`${b}/${a}`] ?? s.defaultFeePct;
 }
 
-// Carte « Conseil » en tête d'accueil : croise les signaux de paires avec le
-// portefeuille et dit quoi swapper (ou explique pourquoi il vaut mieux attendre).
+// ------------------------------------------------------ positions (switchs faits)
+
+const openPositions = () => state.positions.filter((p) => !p.closed);
+
+/** État actuel d'une position ouverte : ce que le retour rapporterait maintenant. */
+function posStatus(pos) {
+  return positionReturn(
+    pos,
+    priceOf(pos.from),
+    priceOf(pos.to),
+    feeFor(pos.from, pos.to),
+    state.settings.minReturnGainPct
+  );
+}
+
+/** Ouvre le formulaire de validation d'un switch (ou de son retour). */
+function openForm(form) {
+  state.form = form;
+  render();
+}
+
+/** Formulaire : quantités réellement données/reçues (taux réel, frais inclus). */
+function switchForm() {
+  const f = state.form;
+  if (!f) return "";
+  const title =
+    f.mode === "open"
+      ? `J'ai switché ${esc(f.from)} → ${esc(f.to)}`
+      : `J'ai re-switché ${esc(f.from)} → ${esc(f.to)}`;
+  return `<div class="card form-card">
+    <h3>${title}</h3>
+    <p class="note" style="margin-top:0">Saisis les montants réels affichés par ton exchange :
+    les frais qu'il t'a pris sont ainsi pris en compte automatiquement.</p>
+    <div class="settings-inline">
+      <div><label>Donné (${esc(f.from)})</label>
+        <input type="number" min="0" step="any" inputmode="decimal" id="form-qty-from" value="${f.qtyFrom ?? ""}"></div>
+      <div><label>Reçu (${esc(f.to)})</label>
+        <input type="number" min="0" step="any" inputmode="decimal" id="form-qty-to" value="${f.qtyTo ?? ""}"></div>
+    </div>
+    <button class="btn" id="form-save">Valider</button>
+    <button class="btn btn-ghost" id="form-cancel">Annuler</button>
+  </div>`;
+}
+
+function bindSwitchForm() {
+  if (!state.form) return;
+  $("#form-cancel").addEventListener("click", () => {
+    state.form = null;
+    render();
+  });
+  $("#form-save").addEventListener("click", () => {
+    const f = state.form;
+    const qtyFrom = Number($("#form-qty-from").value);
+    const qtyTo = Number($("#form-qty-to").value);
+    if (!(qtyFrom > 0) || !(qtyTo > 0)) return;
+    const s = state.settings;
+    const now = Date.now();
+
+    if (f.mode === "open") {
+      state.positions.unshift({
+        id: `${now}-${f.from}-${f.to}`,
+        t: now,
+        from: f.from,
+        to: f.to,
+        qtyFrom,
+        qtyTo,
+        closed: null,
+      });
+    } else {
+      const pos = state.positions.find((p) => p.id === f.id);
+      if (pos) {
+        pos.closed = { t: now, qtyBack: qtyTo, profitPct: (qtyTo / pos.qtyFrom - 1) * 100 };
+      }
+    }
+    // Le portefeuille suit le switch réel.
+    s.holdings[f.from] = Math.max(0, (Number(s.holdings[f.from]) || 0) - qtyFrom);
+    if (!s.holdings[f.from]) delete s.holdings[f.from];
+    s.holdings[f.to] = (Number(s.holdings[f.to]) || 0) + qtyTo;
+
+    store.savePositions(state.positions);
+    store.saveSettings(s);
+    state.form = null;
+    render();
+  });
+}
+
+/** Liste des positions ouvertes + leur suivi vs ta quantité de départ. */
+function positionsCard() {
+  const open = openPositions();
+  const closed = state.positions.filter((p) => p.closed).slice(0, 5);
+  if (!open.length && !closed.length) return "";
+
+  const openRows = open
+    .map((p) => {
+      const st = posStatus(p);
+      const wait = st
+        ? st.ready
+          ? `<b class="up">Re-switche maintenant : ${fmtQty(st.qtyBack)} ${esc(p.from)} (${fmtPct(st.profitPct)})</b>`
+          : `Vaut <b>${fmtQty(st.qtyBack)} ${esc(p.from)}</b> (<b class="${pctClass(st.profitPct)}">${fmtPct(st.profitPct)}</b>) — il manque ${fmtPct(st.missingPct).replace("+", "")} pour re-switcher`
+        : "Prix indisponibles";
+      const since = new Date(p.t).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+      return `<div class="pos-row ${st?.ready ? "pos-ready" : ""}">
+        <div class="pos-head">${fmtQty(p.qtyFrom)} ${esc(p.from)} → ${fmtQty(p.qtyTo)} ${esc(p.to)}
+          <span class="alert-source">depuis le ${since}</span></div>
+        <div class="pos-status">${wait}</div>
+        <button class="btn btn-ghost btn-sm" data-close-pos="${esc(p.id)}">J'ai re-switché ${esc(p.to)} → ${esc(p.from)}</button>
+      </div>`;
+    })
+    .join("");
+
+  const closedRows = closed
+    .map(
+      (p) =>
+        `<div class="swap-line">${fmtQty(p.qtyFrom)} ${esc(p.from)} → ${fmtQty(p.closed.qtyBack)} ${esc(p.from)} :
+        <b class="${pctClass(p.closed.profitPct)}">${fmtPct(p.closed.profitPct)}</b></div>`
+    )
+    .join("");
+
+  return `<div class="card">
+    <h3>🔁 Mes switchs en cours</h3>
+    ${open.length ? openRows : `<p class="note">Aucun switch en cours.</p>`}
+    ${closed.length ? `<div class="swap-title">Terminés</div>${closedRows}` : ""}
+  </div>`;
+}
+
+function bindPositions() {
+  for (const btn of document.querySelectorAll("[data-close-pos]")) {
+    btn.addEventListener("click", () => {
+      const pos = state.positions.find((p) => p.id === btn.dataset.closePos);
+      if (!pos) return;
+      const st = posStatus(pos);
+      openForm({
+        mode: "close",
+        id: pos.id,
+        from: pos.to,
+        to: pos.from,
+        qtyFrom: pos.qtyTo,
+        qtyTo: st ? Number(st.qtyBack.toPrecision(6)) : "",
+      });
+    });
+  }
+  for (const btn of document.querySelectorAll("[data-open-pos]")) {
+    const [from, to, qty] = btn.dataset.openPos.split("|");
+    btn.addEventListener("click", () => openForm({ mode: "open", from, to, qtyFrom: qty }));
+  }
+}
+
+// Carte « Conseil » en tête d'accueil : d'abord tes switchs en cours (référence =
+// ta quantité de départ), sinon les signaux du marché croisés au portefeuille.
 function adviceCard() {
   const s = state.settings;
+
+  // Priorité : une position ouverte attend son retour.
+  const open = openPositions();
+  // withStatus est vide tant que les prix ne sont pas chargés (premier rendu).
+  const withStatus = open.map((p) => ({ p, st: posStatus(p) })).filter((x) => x.st);
+  if (withStatus.length) {
+    const ready = withStatus.filter((x) => x.st.ready).sort((a, b) => b.st.profitPct - a.st.profitPct)[0];
+    if (ready) {
+      const { p, st } = ready;
+      return `<div class="card advice-card advice-good">
+        <h3>💡 Re-switche tes ${esc(p.to)} en ${esc(p.from)} maintenant</h3>
+        <p class="advice-text">Tu avais donné <b>${fmtQty(p.qtyFrom)} ${esc(p.from)}</b> pour
+        ${fmtQty(p.qtyTo)} ${esc(p.to)}. Aujourd'hui, ce retour te rendrait
+        <b>≈ ${fmtQty(st.qtyBack)} ${esc(p.from)}</b>, soit <b class="up">${fmtPct(st.profitPct)}</b>
+        de plus qu'au départ, frais du retour déduits. C'est ton profit réel : boucle la position.</p>
+        <button class="btn" data-close-pos="${esc(p.id)}">J'ai re-switché</button></div>`;
+    }
+    const best = withStatus.sort((a, b) => b.st.profitPct - a.st.profitPct)[0];
+    return `<div class="card advice-card">
+      <h3>💡 Patiente, ne re-switche pas encore</h3>
+      <p class="advice-text">Ton switch ${esc(best.p.from)} → ${esc(best.p.to)} vaut aujourd'hui
+      <b>${fmtQty(best.st.qtyBack)} ${esc(best.p.from)}</b> contre
+      <b>${fmtQty(best.p.qtyFrom)} ${esc(best.p.from)}</b> investis
+      (<b class="${pctClass(best.st.profitPct)}">${fmtPct(best.st.profitPct)}</b>).
+      Re-switcher maintenant, c'est encaisser cette perte : il manque
+      <b>${fmtPct(best.st.missingPct).replace("+", "")}</b> pour atteindre ton objectif de
+      ${fmtPct(s.minReturnGainPct)}. L'app t'alertera dès que ce sera le cas.</p></div>`;
+  }
+
   const held = Object.keys(s.holdings).filter((sym) => (Number(s.holdings[sym]) || 0) > 0);
   if (!held.length) {
     return `<div class="card advice-card"><h3>💡 Conseil</h3>
@@ -284,6 +489,7 @@ function adviceCard() {
       (z-score ${r.zScore.toFixed(1)}${r.rsi !== null && r.rsi !== undefined ? `, RSI ${Math.round(r.rsi)}` : ""}),
       soit <b class="up">${fmtPct(r.netGainPct)} net</b> après ${String(r.feePct).replace(".", ",")} % de frais.
       Si le ratio revient vers sa moyenne, l'aller-retour laisse ce profit en ${esc(r.from)}.</p>
+      <button class="btn" data-open-pos="${esc(r.from)}|${esc(r.to)}|${r.qty}">J'ai fait ce switch</button>
       ${others}</div>`;
   }
 
@@ -397,9 +603,13 @@ function renderCoins() {
     .join("");
   $("#view-coins").innerHTML =
     errorBanner() +
+    switchForm() +
     adviceCard() +
+    positionsCard() +
     portfolioCard() +
     (rows || `<p class="msg-empty">Aucune crypto suivie.</p>`);
+  bindSwitchForm();
+  bindPositions();
   bindPortfolioInputs();
 }
 
@@ -580,6 +790,8 @@ function renderSettings() {
         <div><label>Anti-spam (min entre alertes)</label>
           <input type="number" id="set-cooldown" min="5" step="5" value="${s.cooldownMin}"></div>
       </div>
+      <label>Gain minimum pour re-switcher (% vs ta quantité de départ)</label>
+      <input type="number" id="set-minreturn" min="0" step="0.1" value="${s.minReturnGainPct}">
       ${feeInputs}
       <button class="btn" id="save-settings">Enregistrer</button>
       <p class="note">Ces réglages s'appliquent à l'app. Le bot d'arrière-plan (alertes ntfy quand
@@ -612,6 +824,7 @@ function renderSettings() {
     s.zScoreTrigger = Number($("#set-zscore").value) || 2;
     s.minNetGainPct = Number($("#set-mingain").value) || 0;
     s.cooldownMin = Math.max(5, Number($("#set-cooldown").value) || 240);
+    s.minReturnGainPct = Number($("#set-minreturn").value) || 0;
     for (const input of document.querySelectorAll("[data-fee]")) {
       s.fees[input.dataset.fee] = Number(input.value) || 0;
     }

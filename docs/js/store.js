@@ -2,6 +2,7 @@
 // la PWA ; les seuils du bot de fond se règlent dans config.json (repo GitHub).
 
 const SETTINGS_KEY = "csa-settings-v1";
+const POSITIONS_KEY = "csa-positions-v1";
 const HISTORY_CACHE_KEY = "csa-history-cache-v1";
 const LOCAL_ALERTS_KEY = "csa-local-alerts-v1";
 const NOTIF_COOLDOWN_KEY = "csa-notif-cooldowns-v1";
@@ -36,6 +37,7 @@ export function loadSettings(config) {
     hiddenSymbols: [],
     notifyInApp: true,
     holdings: {}, // symbol -> quantité détenue (simulateur de swap)
+    minReturnGainPct: 1.0, // gain minimum vs ta quantité de départ pour re-switcher
   };
   const saved = read(SETTINGS_KEY, {});
   return { ...defaults, ...saved, fees: { ...defaults.fees, ...(saved.fees || {}) } };
@@ -59,6 +61,18 @@ export function loadLocalAlerts() {
 }
 export function saveLocalAlerts(alerts) {
   write(LOCAL_ALERTS_KEY, alerts.slice(0, 100));
+}
+
+/**
+ * Switchs réellement effectués et validés dans l'app.
+ * { id, t, from, to, qtyFrom, qtyTo, closed: null | { t, qtyBack, profitPct } }
+ * qtyTo / qtyFrom = taux d'entrée RÉEL (frais de l'exchange déjà dedans).
+ */
+export function loadPositions() {
+  return read(POSITIONS_KEY, []);
+}
+export function savePositions(positions) {
+  write(POSITIONS_KEY, positions.slice(0, 200));
 }
 
 export function loadNotifCooldowns() {
