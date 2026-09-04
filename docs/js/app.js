@@ -55,6 +55,15 @@ function fmtPct(v, digits = 1) {
   if (v === null || v === undefined) return "?";
   return `${v >= 0 ? "+" : ""}${v.toFixed(digits).replace(".", ",")} %`;
 }
+/** "YYYY-MM-DDTHH:mm" local, format attendu par <input type="datetime-local">. */
+function localNow(ms = Date.now()) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+const fmtWhen = (ms) =>
+  new Date(ms).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
 const pctClass = (v) => (v === null || v === undefined ? "flat" : v > 0.05 ? "up" : v < -0.05 ? "down" : "flat");
 
 // ---------------------------------------------------------------- coins/pairs
@@ -193,24 +202,24 @@ function maybeNotify() {
     if (now - (cooldowns[key] || 0) < state.settings.cooldownMin * MIN) continue;
     cooldowns[key] = now;
     const message =
-      `Re-switch ${pos.to} → ${pos.from} : ${fmtQty(st.qtyBack)} ${pos.from} récupérés ` +
-      `contre ${fmtQty(pos.qtyFrom)} investis (${fmtPct(st.profitPct)}, frais déduits)`;
+      `Re-switch ${pos.current} → ${pos.origin} : ${fmtQty(st.qtyBack)} ${pos.origin} récupérés ` +
+      `contre ${fmtQty(pos.qtyOrigin)} investis (${fmtPct(st.profitPct)}, frais déduits)`;
     state.localAlerts.unshift({
       id: `${now}-${key}`,
       t: now,
-      from: pos.to,
-      to: pos.from,
+      from: pos.current,
+      to: pos.origin,
       netGainPct: st.profitPct,
       message,
       source: "app",
     });
-    notify(`Re-switch ${pos.to} → ${pos.from}`, message);
+    notify(`Re-switch ${pos.current} → ${pos.origin}`, message);
   }
 
   for (const a of state.analyses) {
     if (!a.signal) continue;
     // Une position déjà ouverte sur cette crypto : c'est son retour qui compte.
-    if (openPositions().some((p) => p.to === a.signal.from || p.from === a.signal.from)) continue;
+    if (openPositions().some((p) => p.current === a.signal.from)) continue;
     const key = `${a.signal.from}->${a.signal.to}`;
     if (now - (cooldowns[key] || 0) < state.settings.cooldownMin * MIN) continue;
     cooldowns[key] = now;
@@ -296,7 +305,7 @@ async function publishPositions(force = false) {
   const topic = (s.ntfyTopic || "").trim();
   if (!topic) return;
   const open = openPositions();
-  const hash = JSON.stringify(open.map((p) => [p.id, p.qtyFrom, p.qtyTo])) + s.minReturnGainPct;
+  const hash = JSON.stringify(open.map((p) => [p.id, p.qtyOrigin, p.qtyCurrent])) + s.minReturnGainPct;
   if (!force && hash === s.lastSyncHash) return;
   try {
     const blob = await seal(
@@ -322,9 +331,9 @@ async function publishPositions(force = false) {
 function posStatus(pos) {
   return positionReturn(
     pos,
-    priceOf(pos.from),
-    priceOf(pos.to),
-    feeFor(pos.from, pos.to),
+    priceOf(pos.origin),
+    priceOf(pos.current),
+    feeFor(pos.origin, pos.current),
     state.settings.minReturnGainPct
   );
 }
@@ -347,7 +356,7 @@ function switchForm() {
   // En ouverture, les deux cryptos restent modifiables : on peut ainsi saisir
   // n'importe quel switch réellement effectué, même sans recommandation en cours.
   const symbols = activeCoins().map((c) => c.symbol);
-  for (const p of openPositions()) if (!symbols.includes(p.to)) symbols.push(p.to);
+  for (const p of openPositions()) if (!symbols.includes(p.current)) symbols.push(p.current);
   const options = (sel) =>
     symbols
       .map((sym) => `<option value="${esc(sym)}" ${sym === sel ? "selected" : ""}>${esc(sym)}</option>`)
@@ -360,16 +369,14 @@ function switchForm() {
         </div>`
       : "";
 
-  // Switch enchaîné : la crypto donnée provient d'un suivi encore ouvert.
-  const chained = f.mode === "open" ? openPositions().filter((p) => p.to === f.from) : [];
-  const chainedBox = chained
-    .map(
-      (p) => `<label class="check-row">
-        <input type="checkbox" class="form-chain" data-chain="${esc(p.id)}" checked>
-        Clôturer le suivi ${esc(p.from)} → ${esc(p.to)} (ces ${esc(p.to)} partent dans ce switch)
-      </label>`
-    )
-    .join("");
+  // Si la crypto donnée provient d'un suivi en cours, le switch prolonge
+  // simplement ce suivi (la mise d'origine reste la référence). Rien à décider.
+  const chained = f.mode === "open" ? openPositions().find((p) => p.current === f.from) : null;
+  const chainNote = chained
+    ? `<p class="note">Ces ${esc(f.from)} viennent de ton suivi démarré en
+       <b>${esc(chained.origin)}</b> : le switch prolonge ce suivi, et l'objectif reste de
+       récupérer plus que tes ${fmtQty(chained.qtyOrigin)} ${esc(chained.origin)} de départ.</p>`
+    : "";
 
   return `<div class="card form-card">
     <h3>${title}</h3>
@@ -382,7 +389,9 @@ function switchForm() {
       <div><label>Quantité reçue</label>
         <input type="number" min="0" step="any" inputmode="decimal" id="form-qty-to" value="${f.qtyTo ?? ""}"></div>
     </div>
-    ${chainedBox}
+    <label>Date et heure du switch</label>
+    <input type="datetime-local" id="form-when" value="${f.when ?? localNow()}">
+    ${chainNote}
     <button class="btn" id="form-save">Valider</button>
     <button class="btn btn-ghost" id="form-cancel">Annuler</button>
   </div>`;
@@ -422,28 +431,58 @@ function bindSwitchForm() {
     const s = state.settings;
     const now = Date.now();
 
-    // Switch enchaîné : les cryptos données proviennent d'un suivi encore ouvert,
-    // qui ne peut donc plus être bouclé — on le clôture sans revendiquer de gain.
-    for (const box of document.querySelectorAll(".form-chain")) {
-      if (!box.checked) continue;
-      const prev = state.positions.find((p) => p.id === box.dataset.chain);
-      if (prev && !prev.closed) prev.closed = { t: now, chained: true, qtyBack: null, profitPct: null };
-    }
+    // Date réelle du switch (saisissable : on valide souvent après coup).
+    const whenInput = $("#form-when")?.value;
+    const when = whenInput ? new Date(whenInput).getTime() : now;
 
     if (f.mode === "open") {
-      state.positions.unshift({
-        id: `${now}-${f.from}-${f.to}`,
-        t: now,
-        from: f.from,
-        to: f.to,
-        qtyFrom,
-        qtyTo,
-        closed: null,
-      });
+      const step = { t: when, from: f.from, to: f.to, qtyFrom, qtyTo };
+      // La crypto donnée provient-elle d'un suivi en cours ? Si oui, le switch
+      // prolonge la chaîne : la mise d'origine reste la référence du profit.
+      const chain = openPositions().find((p) => p.current === f.from);
+      const moved = chain ? Math.min(qtyFrom, chain.qtyCurrent) : 0;
+      if (chain) {
+        const share = moved / chain.qtyCurrent; // part du suivi réellement déplacée
+        const received = qtyTo * (moved / qtyFrom);
+        if (share >= 0.999) {
+          chain.current = f.to;
+          chain.qtyCurrent = received;
+          chain.steps.push(step);
+        } else {
+          // Switch partiel : le suivi se scinde, chaque part garde sa mise d'origine.
+          const originMoved = chain.qtyOrigin * share;
+          chain.qtyOrigin -= originMoved;
+          chain.qtyCurrent -= moved;
+          state.positions.unshift({
+            id: `${now}-${f.from}-${f.to}`,
+            t: chain.t,
+            origin: chain.origin,
+            qtyOrigin: originMoved,
+            current: f.to,
+            qtyCurrent: received,
+            steps: [...chain.steps, step],
+            closed: null,
+          });
+        }
+      }
+      // Quantité donnée au-delà d'un suivi (ou sans suivi) : nouveau suivi.
+      const extra = qtyFrom - moved;
+      if (extra > 0) {
+        state.positions.unshift({
+          id: `${now}-${f.from}-${f.to}-${Math.round(extra)}`,
+          t: when,
+          origin: f.from,
+          qtyOrigin: extra,
+          current: f.to,
+          qtyCurrent: qtyTo * (extra / qtyFrom),
+          steps: [step],
+          closed: null,
+        });
+      }
     } else {
       const pos = state.positions.find((p) => p.id === f.id);
       if (pos) {
-        pos.closed = { t: now, qtyBack: qtyTo, profitPct: (qtyTo / pos.qtyFrom - 1) * 100 };
+        pos.closed = { t: when, qtyBack: qtyTo, profitPct: (qtyTo / pos.qtyOrigin - 1) * 100 };
       }
     }
     // Le portefeuille suit le switch réel.
@@ -470,15 +509,15 @@ function positionsCard() {
       const st = posStatus(p);
       const wait = st
         ? st.ready
-          ? `<b class="up">Re-switche maintenant : ${fmtQty(st.qtyBack)} ${esc(p.from)} (${fmtPct(st.profitPct)})</b>`
-          : `Vaut <b>${fmtQty(st.qtyBack)} ${esc(p.from)}</b> (<b class="${pctClass(st.profitPct)}">${fmtPct(st.profitPct)}</b>) — il manque ${fmtPct(st.missingPct).replace("+", "")} pour re-switcher`
+          ? `<b class="up">Re-switche maintenant : ${fmtQty(st.qtyBack)} ${esc(p.origin)} (${fmtPct(st.profitPct)})</b>`
+          : `Vaut <b>${fmtQty(st.qtyBack)} ${esc(p.origin)}</b> (<b class="${pctClass(st.profitPct)}">${fmtPct(st.profitPct)}</b>) — il manque ${fmtPct(st.missingPct).replace("+", "")} pour re-switcher`
         : "Prix indisponibles";
       const since = new Date(p.t).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
       return `<div class="pos-row ${st?.ready ? "pos-ready" : ""}">
-        <div class="pos-head">${fmtQty(p.qtyFrom)} ${esc(p.from)} → ${fmtQty(p.qtyTo)} ${esc(p.to)}
+        <div class="pos-head">${fmtQty(p.qtyOrigin)} ${esc(p.origin)} → ${fmtQty(p.qtyCurrent)} ${esc(p.current)}
           <span class="alert-source">depuis le ${since}</span></div>
         <div class="pos-status">${wait}</div>
-        <button class="btn btn-ghost btn-sm" data-close-pos="${esc(p.id)}">J'ai re-switché ${esc(p.to)} → ${esc(p.from)}</button>
+        <button class="btn btn-ghost btn-sm" data-close-pos="${esc(p.id)}">J'ai re-switché ${esc(p.current)} → ${esc(p.origin)}</button>
       </div>`;
     })
     .join("");
@@ -486,7 +525,7 @@ function positionsCard() {
   const closedRows = closed
     .map(
       (p) =>
-        `<div class="swap-line">${fmtQty(p.qtyFrom)} ${esc(p.from)} → ${fmtQty(p.closed.qtyBack)} ${esc(p.from)} :
+        `<div class="swap-line">${fmtQty(p.qtyOrigin)} ${esc(p.origin)} → ${fmtQty(p.closed.qtyBack)} ${esc(p.origin)} :
         <b class="${pctClass(p.closed.profitPct)}">${fmtPct(p.closed.profitPct)}</b></div>`
     )
     .join("");
@@ -507,9 +546,9 @@ function bindPositions() {
       openForm({
         mode: "close",
         id: pos.id,
-        from: pos.to,
-        to: pos.from,
-        qtyFrom: pos.qtyTo,
+        from: pos.current,
+        to: pos.origin,
+        qtyFrom: pos.qtyCurrent,
         qtyTo: st ? Number(st.qtyBack.toPrecision(6)) : "",
       });
     });
@@ -517,6 +556,69 @@ function bindPositions() {
   for (const btn of document.querySelectorAll("[data-open-pos]")) {
     const [from, to, qty] = btn.dataset.openPos.split("|");
     btn.addEventListener("click", () => openForm({ mode: "open", from, to, qtyFrom: qty }));
+  }
+}
+
+/**
+ * Relance de validation : pour chaque switch conseillé récemment (alerte de
+ * l'app ou du bot), demander s'il a été fait tant qu'il n'est pas enregistré.
+ * Évite d'avoir à ressaisir un switch à la main plus tard.
+ */
+function pendingPrompts() {
+  const dismissed = store.loadDismissedPrompts();
+  const cutoff = Date.now() - 3 * 24 * 60 * MIN;
+  const seen = new Set();
+  const out = [];
+  for (const alert of [...state.localAlerts, ...state.botAlerts]) {
+    if (!alert.t || alert.t < cutoff || !alert.from || !alert.to) continue;
+    const key = `${alert.from}->${alert.to}`;
+    if (seen.has(key) || dismissed.includes(alert.id)) continue;
+    // Déjà enregistré depuis l'alerte ? Alors plus rien à demander.
+    const done = state.positions.some((p) =>
+      (p.steps || []).some(
+        (st) => st.from === alert.from && st.to === alert.to && st.t >= alert.t - 60 * MIN
+      )
+    );
+    if (done) continue;
+    // Ne relancer que si la crypto de départ est plausiblement détenue :
+    // inutile de demander pour un switch qu'il n'a pas pu faire.
+    const holds =
+      (Number(state.settings.holdings[alert.from]) || 0) > 0 ||
+      openPositions().some((p) => p.current === alert.from);
+    if (!holds) continue;
+    seen.add(key);
+    out.push(alert);
+  }
+  return out.slice(0, 3);
+}
+
+function promptCards() {
+  return pendingPrompts()
+    .map(
+      (a) => `<div class="card prompt-card">
+        <h3>As-tu fait ce switch ${esc(a.from)} → ${esc(a.to)} ?</h3>
+        <p class="advice-text">Conseillé le ${fmtWhen(a.t)}. Enregistre-le pour que l'app
+        surveille le bon moment de revenir en ${esc(a.from)}.</p>
+        <button class="btn" data-prompt-yes="${esc(a.id)}|${esc(a.from)}|${esc(a.to)}|${a.t}">Oui, l'enregistrer</button>
+        <button class="btn btn-ghost" data-prompt-no="${esc(a.id)}">Non</button>
+      </div>`
+    )
+    .join("");
+}
+
+function bindPrompts() {
+  for (const btn of document.querySelectorAll("[data-prompt-yes]")) {
+    const [, from, to, t] = btn.dataset.promptYes.split("|");
+    // Date pré-remplie à l'heure de l'alerte : le switch a été fait autour.
+    btn.addEventListener("click", () =>
+      openForm({ mode: "open", from, to, when: localNow(Number(t)) })
+    );
+  }
+  for (const btn of document.querySelectorAll("[data-prompt-no]")) {
+    btn.addEventListener("click", () => {
+      store.saveDismissedPrompts([...store.loadDismissedPrompts(), btn.dataset.promptNo]);
+      render();
+    });
   }
 }
 
@@ -534,19 +636,19 @@ function adviceCard() {
     if (ready) {
       const { p, st } = ready;
       return `<div class="card advice-card advice-good">
-        <h3>💡 Re-switche tes ${esc(p.to)} en ${esc(p.from)} maintenant</h3>
-        <p class="advice-text">Tu avais donné <b>${fmtQty(p.qtyFrom)} ${esc(p.from)}</b> pour
-        ${fmtQty(p.qtyTo)} ${esc(p.to)}. Aujourd'hui, ce retour te rendrait
-        <b>≈ ${fmtQty(st.qtyBack)} ${esc(p.from)}</b>, soit <b class="up">${fmtPct(st.profitPct)}</b>
+        <h3>💡 Re-switche tes ${esc(p.current)} en ${esc(p.origin)} maintenant</h3>
+        <p class="advice-text">Tu avais donné <b>${fmtQty(p.qtyOrigin)} ${esc(p.origin)}</b>, tu détiens
+        ${fmtQty(p.qtyCurrent)} ${esc(p.current)}. Aujourd'hui, ce retour te rendrait
+        <b>≈ ${fmtQty(st.qtyBack)} ${esc(p.origin)}</b>, soit <b class="up">${fmtPct(st.profitPct)}</b>
         de plus qu'au départ, frais du retour déduits. C'est ton profit réel : boucle la position.</p>
         <button class="btn" data-close-pos="${esc(p.id)}">J'ai re-switché</button></div>`;
     }
     const best = withStatus.sort((a, b) => b.st.profitPct - a.st.profitPct)[0];
     return `<div class="card advice-card">
       <h3>💡 Patiente, ne re-switche pas encore</h3>
-      <p class="advice-text">Ton switch ${esc(best.p.from)} → ${esc(best.p.to)} vaut aujourd'hui
-      <b>${fmtQty(best.st.qtyBack)} ${esc(best.p.from)}</b> contre
-      <b>${fmtQty(best.p.qtyFrom)} ${esc(best.p.from)}</b> investis
+      <p class="advice-text">Ton suivi ${esc(best.p.origin)} → ${esc(best.p.current)} vaut aujourd'hui
+      <b>${fmtQty(best.st.qtyBack)} ${esc(best.p.origin)}</b> contre
+      <b>${fmtQty(best.p.qtyOrigin)} ${esc(best.p.origin)}</b> investis
       (<b class="${pctClass(best.st.profitPct)}">${fmtPct(best.st.profitPct)}</b>).
       Re-switcher maintenant, c'est encaisser cette perte : il manque
       <b>${fmtPct(best.st.missingPct).replace("+", "")}</b> pour atteindre ton objectif de
@@ -719,12 +821,14 @@ function renderCoins() {
     errorBanner() +
     switchForm() +
     adviceCard() +
+    promptCards() +
     positionsCard() +
     portfolioCard() +
     (rows || `<p class="msg-empty">Aucune crypto suivie.</p>`);
   bindSwitchForm();
   bindPositions();
   bindPortfolioInputs();
+  bindPrompts();
 }
 
 /** Moyenne mobile glissante (fenêtre en minutes) — O(n), pour le graphique. */

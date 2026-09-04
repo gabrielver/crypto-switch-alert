@@ -199,3 +199,7 @@ canvas.chart { width: 100%; height: 150px; display: block; margin-top: 8px; touc
   font-size: 0.82rem; color: var(--ink-2); font-weight: 400 !important; margin-top: 10px !important;
 }
 .check-row input { width: auto; margin-top: 2px; }
+
+/* Relance de validation d'un switch conseillé */
+.prompt-card { border-color: var(--series-2); }
+.prompt-card h3 { font-size: 0.95rem; }

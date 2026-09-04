@@ -205,16 +205,19 @@ async function checkPositions(payload, priceOf, config, alertsDb, topic, now) {
   const target = payload.minReturnGainPct ?? config.analysis.minNetGainPct;
   const engaged = new Set();
   for (const pos of payload.positions || []) {
-    engaged.add(pos.from).add(pos.to);
+    // Chaîne de switchs : mise d'origine (référence) et crypto détenue aujourd'hui.
+    const origin = pos.origin ?? pos.from;
+    const current = pos.current ?? pos.to;
+    engaged.add(origin).add(current);
     const feePct =
       config.pairs.find(
         (p) =>
-          (p.from === pos.from && p.to === pos.to) || (p.from === pos.to && p.to === pos.from)
+          (p.from === origin && p.to === current) || (p.from === current && p.to === origin)
       )?.feePct ?? 2;
-    const st = positionReturn(pos, priceOf(pos.from), priceOf(pos.to), feePct, target);
+    const st = positionReturn(pos, priceOf(origin), priceOf(current), feePct, target);
     if (!st) continue;
     console.log(
-      `Position ${pos.from}->${pos.to} : retour ${signedPct(st.profitPct)} ` +
+      `Position ${origin}->${current} : retour ${signedPct(st.profitPct)} ` +
         `(objectif ${signedPct(target)}) ${st.ready ? "PRÊTE" : "en attente"}`
     );
     if (!st.ready) continue;
@@ -224,13 +227,13 @@ async function checkPositions(payload, priceOf, config, alertsDb, topic, now) {
     alertsDb.cooldowns[key] = now;
 
     const message =
-      `Re-switch ${pos.to} → ${pos.from} : ${signedPct(st.profitPct)} vs ton entrée, ` +
+      `Re-switch ${current} → ${origin} : ${signedPct(st.profitPct)} vs ton entrée, ` +
       `frais du retour déduits. Ouvre l'app pour les montants.`;
     alertsDb.alerts.unshift({
       id: `${now}-${key}`,
       t: now,
-      from: pos.to,
-      to: pos.from,
+      from: current,
+      to: origin,
       netGainPct: st.profitPct,
       message,
       source: "bot-position",
@@ -239,7 +242,7 @@ async function checkPositions(payload, priceOf, config, alertsDb, topic, now) {
       try {
         await pushNtfy(
           topic,
-          `Re-switch ${pos.to} -> ${pos.from} : ${signedPct(st.profitPct)}`,
+          `Re-switch ${current} -> ${origin} : ${signedPct(st.profitPct)}`,
           message,
           "moneybag"
         );

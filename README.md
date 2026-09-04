@@ -153,15 +153,21 @@ prix **toi** tu es entré. C'est le suivi de switchs qui répond à « quand rev
 
 Le portefeuille est mis à jour automatiquement à chaque validation.
 
-**Saisie manuelle** : le bouton « + J'ai fait un switch » (sous le portefeuille) est toujours
-disponible — pour enregistrer un switch fait sans recommandation de l'app, ou dont le signal
-a disparu entre-temps. Les cryptos données/reçues se choisissent dans le formulaire.
+**L'app te relance elle-même** : après chaque switch conseillé (alerte de l'app ou du bot),
+une carte « As-tu fait ce switch GMT → USDC ? » apparaît en haut de l'accueil tant qu'il
+n'est pas enregistré. Un bouton l'enregistre, avec **la date et l'heure de l'alerte
+pré-remplies**. Elle disparaît une fois le switch validé, ou si tu réponds « Non ». Aucune
+relance pour un switch dont tu ne détiens pas la crypto de départ.
 
-**Plusieurs switchs en parallèle** sont suivis indépendamment. Si la crypto que tu donnes
-provient d'un switch encore ouvert (ex : GST → GMT puis GMT → USDC), l'app propose de
-clôturer le premier suivi : ces GMT partent dans le nouveau switch, le retour vers GST
-n'est plus possible. Décoche la case si les quantités sont indépendantes. Un suivi clôturé
-ainsi est marqué « enchaîné » et ne revendique aucun gain, faute de boucle complète.
+**Date modifiable** : le formulaire contient un champ date/heure — on valide souvent un
+switch le lendemain. (Le pourcentage de retour, lui, ne dépend pas de la date : il compare
+tes montants réels aux prix actuels.)
+
+**Chaînes de switchs.** Un suivi garde sa **mise d'origine** comme référence. Si tu
+enchaînes GST → GMT puis GMT → USDC, l'app ne crée pas deux suivis concurrents : elle
+prolonge le même, affiché « 1 000 GST → 0,95 USDC », et l'objectif reste de récupérer plus
+que tes 1 000 GST de départ. Aucune case à cocher, c'est automatique. Un switch partiel
+scinde le suivi proportionnellement, et une quantité dépassant le suivi en ouvre un second.
 
 ### Alertes de retour quand l'app est fermée (sans token, sans fuite)
 

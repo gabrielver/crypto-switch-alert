@@ -2,6 +2,7 @@
 // la PWA ; les seuils du bot de fond se règlent dans config.json (repo GitHub).
 
 const SETTINGS_KEY = "csa-settings-v1";
+const DISMISSED_KEY = "csa-dismissed-prompts-v1";
 const POSITIONS_KEY = "csa-positions-v1";
 const HISTORY_CACHE_KEY = "csa-history-cache-v1";
 const LOCAL_ALERTS_KEY = "csa-local-alerts-v1";
@@ -71,7 +72,27 @@ export function saveLocalAlerts(alerts) {
  * qtyTo / qtyFrom = taux d'entrée RÉEL (frais de l'exchange déjà dedans).
  */
 export function loadPositions() {
-  return read(POSITIONS_KEY, []);
+  // Migration : ancien format {from,to,qtyFrom,qtyTo} → chaîne origine/détenu.
+  return read(POSITIONS_KEY, []).map((p) =>
+    p.origin
+      ? p
+      : {
+          ...p,
+          origin: p.from,
+          qtyOrigin: p.qtyFrom,
+          current: p.to,
+          qtyCurrent: p.qtyTo,
+          steps: [{ t: p.t, from: p.from, to: p.to, qtyFrom: p.qtyFrom, qtyTo: p.qtyTo }],
+        }
+  );
+}
+
+/** Alertes dont l'utilisateur a déjà répondu « je ne l'ai pas fait ». */
+export function loadDismissedPrompts() {
+  return read(DISMISSED_KEY, []);
+}
+export function saveDismissedPrompts(ids) {
+  write(DISMISSED_KEY, ids.slice(-50));
 }
 export function savePositions(positions) {
   write(POSITIONS_KEY, positions.slice(0, 200));

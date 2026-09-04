@@ -251,11 +251,15 @@ export function formatSignalMessage(signal) {
  * @param {number} targetPct  gain minimum pour conseiller le retour
  * @returns {{qtyBack, profitPct, missingPct, ready}|null}
  */
-export function positionReturn(pos, priceFrom, priceTo, feePct, targetPct) {
-  if (!priceFrom || !priceTo || !pos.qtyFrom || !pos.qtyTo) return null;
-  // Reconvertir tout le montant reçu vers la crypto de départ, frais déduits.
-  const qtyBack = ((pos.qtyTo * priceTo) / priceFrom) * (1 - feePct / 100);
-  const profitPct = (qtyBack / pos.qtyFrom - 1) * 100;
+export function positionReturn(pos, priceOrigin, priceCurrent, feePct, targetPct) {
+  // Une position est une chaîne : mise d'origine (ce qu'on veut récupérer) et
+  // crypto détenue aujourd'hui, après un ou plusieurs switchs successifs.
+  const qtyOrigin = pos.qtyOrigin ?? pos.qtyFrom;
+  const qtyCurrent = pos.qtyCurrent ?? pos.qtyTo;
+  if (!priceOrigin || !priceCurrent || !qtyOrigin || !qtyCurrent) return null;
+  // Reconvertir tout le montant détenu vers la crypto d'origine, frais déduits.
+  const qtyBack = ((qtyCurrent * priceCurrent) / priceOrigin) * (1 - feePct / 100);
+  const profitPct = (qtyBack / qtyOrigin - 1) * 100;
   return {
     qtyBack,
     profitPct,
