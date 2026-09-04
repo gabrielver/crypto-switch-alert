@@ -341,18 +341,48 @@ function switchForm() {
   if (!f) return "";
   const title =
     f.mode === "open"
-      ? `J'ai switché ${esc(f.from)} → ${esc(f.to)}`
+      ? `J'ai fait un switch`
       : `J'ai re-switché ${esc(f.from)} → ${esc(f.to)}`;
+
+  // En ouverture, les deux cryptos restent modifiables : on peut ainsi saisir
+  // n'importe quel switch réellement effectué, même sans recommandation en cours.
+  const symbols = activeCoins().map((c) => c.symbol);
+  for (const p of openPositions()) if (!symbols.includes(p.to)) symbols.push(p.to);
+  const options = (sel) =>
+    symbols
+      .map((sym) => `<option value="${esc(sym)}" ${sym === sel ? "selected" : ""}>${esc(sym)}</option>`)
+      .join("");
+  const picker =
+    f.mode === "open"
+      ? `<div class="settings-inline">
+          <div><label>J'ai donné</label><select id="form-from">${options(f.from)}</select></div>
+          <div><label>J'ai reçu</label><select id="form-to">${options(f.to)}</select></div>
+        </div>`
+      : "";
+
+  // Switch enchaîné : la crypto donnée provient d'un suivi encore ouvert.
+  const chained = f.mode === "open" ? openPositions().filter((p) => p.to === f.from) : [];
+  const chainedBox = chained
+    .map(
+      (p) => `<label class="check-row">
+        <input type="checkbox" class="form-chain" data-chain="${esc(p.id)}" checked>
+        Clôturer le suivi ${esc(p.from)} → ${esc(p.to)} (ces ${esc(p.to)} partent dans ce switch)
+      </label>`
+    )
+    .join("");
+
   return `<div class="card form-card">
     <h3>${title}</h3>
     <p class="note" style="margin-top:0">Saisis les montants réels affichés par ton exchange :
     les frais qu'il t'a pris sont ainsi pris en compte automatiquement.</p>
+    ${picker}
     <div class="settings-inline">
-      <div><label>Donné (${esc(f.from)})</label>
+      <div><label>Quantité donnée</label>
         <input type="number" min="0" step="any" inputmode="decimal" id="form-qty-from" value="${f.qtyFrom ?? ""}"></div>
-      <div><label>Reçu (${esc(f.to)})</label>
+      <div><label>Quantité reçue</label>
         <input type="number" min="0" step="any" inputmode="decimal" id="form-qty-to" value="${f.qtyTo ?? ""}"></div>
     </div>
+    ${chainedBox}
     <button class="btn" id="form-save">Valider</button>
     <button class="btn btn-ghost" id="form-cancel">Annuler</button>
   </div>`;
@@ -364,13 +394,41 @@ function bindSwitchForm() {
     state.form = null;
     render();
   });
+  // Changer de crypto redessine le formulaire : les cases « switch enchaîné »
+  // dépendent de la crypto donnée.
+  for (const id of ["#form-from", "#form-to"]) {
+    $(id)?.addEventListener("change", () => {
+      state.form = {
+        ...state.form,
+        from: $("#form-from").value,
+        to: $("#form-to").value,
+        qtyFrom: $("#form-qty-from").value || undefined,
+        qtyTo: $("#form-qty-to").value || undefined,
+      };
+      render();
+    });
+  }
   $("#form-save").addEventListener("click", () => {
     const f = state.form;
+    // En ouverture, les cryptos viennent des sélecteurs (switch saisi à la main).
+    if (f.mode === "open") {
+      f.from = $("#form-from")?.value || f.from;
+      f.to = $("#form-to")?.value || f.to;
+      if (f.from === f.to) return;
+    }
     const qtyFrom = Number($("#form-qty-from").value);
     const qtyTo = Number($("#form-qty-to").value);
     if (!(qtyFrom > 0) || !(qtyTo > 0)) return;
     const s = state.settings;
     const now = Date.now();
+
+    // Switch enchaîné : les cryptos données proviennent d'un suivi encore ouvert,
+    // qui ne peut donc plus être bouclé — on le clôture sans revendiquer de gain.
+    for (const box of document.querySelectorAll(".form-chain")) {
+      if (!box.checked) continue;
+      const prev = state.positions.find((p) => p.id === box.dataset.chain);
+      if (prev && !prev.closed) prev.closed = { t: now, chained: true, qtyBack: null, profitPct: null };
+    }
 
     if (f.mode === "open") {
       state.positions.unshift({
@@ -521,7 +579,8 @@ function adviceCard() {
       .slice(1)
       .map(
         (o) =>
-          `<div class="swap-line">Aussi : ${esc(o.from)} → ${esc(o.to)}, <b class="up">${fmtPct(o.netGainPct)}</b> net</div>`
+          `<div class="swap-line">Aussi : ${esc(o.from)} → ${esc(o.to)}, <b class="up">${fmtPct(o.netGainPct)}</b> net
+            <button class="btn btn-ghost btn-sm" data-open-pos="${esc(o.from)}|${esc(o.to)}|${o.qty}">J'ai fait ce switch</button></div>`
       )
       .join("");
     return `<div class="card advice-card advice-good">
@@ -603,10 +662,17 @@ function portfolioCard() {
            <div class="swap-title">Si tu swapes maintenant :</div>${lines.join("")}`
         : `<p class="note">Saisis tes quantités pour voir ce que chaque swap donnerait (frais déduits).</p>`
     }
+    <button class="btn btn-ghost" id="manual-switch">+ J'ai fait un switch</button>
+    <p class="note">Pour enregistrer un switch fait sur ton exchange, même sans recommandation
+    de l'app. Plusieurs switchs peuvent être suivis en parallèle.</p>
   </div>`;
 }
 
 function bindPortfolioInputs() {
+  $("#manual-switch")?.addEventListener("click", () => {
+    const syms = activeCoins().map((c) => c.symbol);
+    openForm({ mode: "open", from: syms[0], to: syms[1] ?? syms[0] });
+  });
   for (const input of document.querySelectorAll("[data-holding]")) {
     input.addEventListener("change", () => {
       const v = Number(input.value);

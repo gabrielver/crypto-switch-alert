@@ -186,3 +186,16 @@ canvas.chart { width: 100%; height: 150px; display: block; margin-top: 8px; touc
 }
 .tab-ico { font-size: 1.15rem; }
 .tab.active { color: var(--ink); font-weight: 700; }
+
+/* Formulaire de switch : sélecteurs de cryptos et cases des switchs enchaînés */
+.form-card select {
+  width: 100%; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--page); color: var(--ink);
+  font-size: 0.95rem;
+}
+.form-card label { display: block; font-size: 0.75rem; color: var(--ink-2); margin: 10px 0 3px; font-weight: 600; }
+.check-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 0.82rem; color: var(--ink-2); font-weight: 400 !important; margin-top: 10px !important;
+}
+.check-row input { width: auto; margin-top: 2px; }

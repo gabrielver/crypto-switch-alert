@@ -153,6 +153,16 @@ prix **toi** tu es entré. C'est le suivi de switchs qui répond à « quand rev
 
 Le portefeuille est mis à jour automatiquement à chaque validation.
 
+**Saisie manuelle** : le bouton « + J'ai fait un switch » (sous le portefeuille) est toujours
+disponible — pour enregistrer un switch fait sans recommandation de l'app, ou dont le signal
+a disparu entre-temps. Les cryptos données/reçues se choisissent dans le formulaire.
+
+**Plusieurs switchs en parallèle** sont suivis indépendamment. Si la crypto que tu donnes
+provient d'un switch encore ouvert (ex : GST → GMT puis GMT → USDC), l'app propose de
+clôturer le premier suivi : ces GMT partent dans le nouveau switch, le retour vers GST
+n'est plus possible. Décoche la case si les quantités sont indépendantes. Un suivi clôturé
+ainsi est marqué « enchaîné » et ne revendique aucun gain, faute de boucle complète.
+
 ### Alertes de retour quand l'app est fermée (sans token, sans fuite)
 
 Le bot tourne sur GitHub, tes positions vivent sur ton téléphone : il faut un pont.
